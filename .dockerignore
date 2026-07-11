@@ -1,0 +1,22 @@
+# Keep the build context small and reproducible.
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+
+# Local state — never bake a developer's sessions/workspaces or secrets in.
+sessions/
+workspaces/
+.env
+.env.*
+
+# Docs/tests not needed at runtime.
+tests/
+uv.lock
+.git/

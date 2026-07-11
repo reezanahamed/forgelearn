@@ -1,0 +1,629 @@
+/*
+ * ForgeLearn styles (Phase 7 — the learning method).
+ *
+ * A header over a three-column row: the ladder rail, the conversation (with its
+ * pinned composer), and the workspace. Only the inner panels scroll. Colours
+ * follow the OS light/dark preference via `color-scheme`, with a few CSS
+ * variables so the two themes share one set of rules.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Accents reused across event kinds; declared once so a theme tweak is local. */
+  --accent: #4f6ef2;
+  --file: #2e8b57;
+  --danger: #d33;
+  --muted: #8886;
+  --hairline: #8883;
+  --step-bg: #8881;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* --- Three-column layout: ladder | conversation | workspace ---------------- */
+
+#layout {
+  flex: 1;
+  display: flex;
+  min-height: 0; /* let the children own the scrolling, not the row */
+}
+
+/* The ladder rail (left): mission, the rungs, progress vs day one. */
+#ladder {
+  flex: none;
+  width: 19rem;
+  border-right: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 14px;
+  gap: 18px;
+}
+
+#ladder[hidden] {
+  display: none;
+}
+
+.ladder-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-bottom: 6px;
+}
+
+.ladder-mission p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.rungs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rung {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 9px 11px;
+}
+
+.rung.locked {
+  opacity: 0.5;
+}
+
+.rung.active {
+  border-color: var(--accent);
+}
+
+.rung.complete {
+  border-color: var(--file);
+}
+
+.rung-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rung-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rung-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--step-bg);
+  opacity: 0.8;
+}
+
+.rung-badge.active {
+  color: var(--accent);
+}
+.rung-badge.built {
+  color: var(--file);
+}
+.rung-badge.complete {
+  color: var(--file);
+}
+
+.rung-learn {
+  font-size: 12px;
+  opacity: 0.65;
+  margin-top: 4px;
+}
+
+.rung-build {
+  margin-top: 8px;
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+.progress {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-item {
+  font-size: 12px;
+  opacity: 0.75;
+  padding-left: 10px;
+  border-left: 2px solid var(--file);
+}
+
+/* Phase 8: export the whole session as a self-contained, offline HTML file. */
+.export {
+  margin-top: 16px;
+  padding: 8px 14px;
+  font-size: 13px;
+  width: 100%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.export:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.export[hidden] {
+  display: none;
+}
+
+/* The conversation column: chat scrolls, composer pins to its bottom. */
+#chat-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The workspace panel on the right: files, Run, and a file viewer. */
+#workspace {
+  flex: none;
+  width: 20rem;
+  border-left: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ws-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ws-head button {
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+/* The file tree. */
+.files {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 6rem;
+}
+
+.files-empty {
+  padding: 10px 8px;
+  opacity: 0.55;
+  font-size: 13px;
+}
+
+.file {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.file:hover {
+  background: var(--step-bg);
+}
+
+.file-name {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.file-size {
+  flex: none;
+  opacity: 0.5;
+  font-size: 11px;
+}
+
+/* The file viewer, shown when a file is clicked. */
+.viewer {
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  max-height: 45%;
+  min-height: 0;
+}
+
+.viewer-head {
+  padding: 8px 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  opacity: 0.7;
+  border-bottom: 1px solid var(--hairline);
+  word-break: break-all;
+}
+
+.viewer-body,
+.viewer pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  white-space: pre;
+}
+
+/* On a narrow screen, stack ladder + workspace around the conversation. */
+@media (max-width: 900px) {
+  #layout {
+    flex-direction: column;
+  }
+  #ladder {
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--hairline);
+    max-height: 35vh;
+  }
+  #workspace {
+    width: auto;
+    border-left: 0;
+    border-top: 1px solid var(--hairline);
+    max-height: 40vh;
+  }
+}
+
+/* --- Header ---------------------------------------------------------------- */
+
+header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: none;
+}
+
+header h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.tagline {
+  opacity: 0.6;
+  font-size: 13px;
+}
+
+/* --- Conversation ---------------------------------------------------------- */
+
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.intro {
+  margin: auto;
+  text-align: center;
+  opacity: 0.7;
+  max-width: 30rem;
+}
+
+.intro .hint {
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+/* A single turn (user or assistant) in the conversation. */
+.msg {
+  max-width: 52rem;
+  width: 100%;
+  align-self: center;
+}
+
+/* The user's request, shown as a right-aligned bubble. */
+.msg.user .bubble {
+  margin-left: auto;
+  max-width: 80%;
+  width: fit-content;
+  padding: 9px 14px;
+  border-radius: 14px 14px 2px 14px;
+  background: var(--accent);
+  color: #fff;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The agent's grouped response for one request. */
+.msg.assistant {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.turn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--hairline);
+  opacity: 0.85;
+}
+
+.turn-body {
+  padding: 6px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --- Status badge in a turn header ---------------------------------------- */
+
+.status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.status.building {
+  color: var(--accent);
+}
+.status.done {
+  color: var(--file);
+}
+.status.error {
+  color: var(--danger);
+}
+
+/* Three pulsing dots shown while the agent is working. */
+.dots span {
+  display: inline-block;
+  animation: blink 1.2s infinite both;
+}
+.dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* --- Events inside a turn -------------------------------------------------- */
+
+/* Narration is the teaching voice — full width, prominent. */
+.ev.narration {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Actions (file writes, commands, other tools, their output) are quieter
+   sub-steps, indented under the narration that introduced them. */
+.ev.step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-left: 4px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--step-bg);
+  font-size: 13px;
+}
+
+.ev .icon {
+  flex: none;
+  opacity: 0.8;
+}
+
+.ev .step-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.ev.file_write .step-text {
+  color: var(--file);
+}
+
+.ev.command .step-text,
+.ev.tool_result .step-text {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.ev.tool_result .step-text {
+  opacity: 0.75;
+}
+
+.ev.error .step-text,
+.ev.is-error .step-text {
+  color: var(--danger);
+}
+
+/* A closing note under the agent's turn (final result summary). */
+.turn-foot {
+  font-size: 12px;
+  opacity: 0.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- Tutor messages + teach-back verdict (Phase 7) ------------------------- */
+
+/* The tutor's voice: questions, announcements, prompts. A soft left card. */
+.msg.tutor .tutor-body {
+  max-width: 90%;
+  width: fit-content;
+  padding: 9px 14px;
+  border-radius: 14px 14px 14px 2px;
+  background: var(--step-bg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The teach-back judge's verdict card. */
+.verdict {
+  max-width: 52rem;
+  width: 100%;
+  align-self: center;
+  border: 1px solid var(--hairline);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.verdict.pass {
+  border-left-color: var(--file);
+}
+.verdict.fail {
+  border-left-color: var(--accent);
+}
+
+.verdict-badge {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.verdict.pass .verdict-badge {
+  color: var(--file);
+}
+.verdict.fail .verdict-badge {
+  color: var(--accent);
+}
+
+.verdict p {
+  margin: 0;
+}
+
+.verdict-label {
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.probes {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.verdict-progress {
+  font-size: 13px;
+  color: var(--file);
+}
+
+.verdict-storage {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* --- Composer -------------------------------------------------------------- */
+
+#composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--hairline);
+  flex: none;
+}
+
+#prompt {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  font: inherit;
+  background: transparent;
+  color: inherit;
+}
+
+#prompt:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Provider dropdown (Phase 6): picks which headless CLI agent builds a request. */
+#agent {
+  flex: none;
+  padding: 10px 8px;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  font: inherit;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+#agent[hidden] {
+  display: none;
+}
+
+button {
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ForgeLearn</title>
+    <!--
+      Phase 7 — the learning method. Structure only lives here; styling is in
+      /static/styles.css and behaviour in /static/app.js (both served by the
+      package's static mount).
+
+      Three columns: the LADDER rail on the left (mission, the rungs, progress),
+      the CONVERSATION in the middle (interview → build stream → teach-back, with
+      the composer pinned at its bottom), and the session WORKSPACE on the right
+      (files the agent wrote + a Run button). The composer changes role with the
+      stage: it asks the topic, takes an interview answer, or takes a teach-back
+      explanation.
+    -->
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>ForgeLearn</h1>
+      <span class="tagline">learn anything by building it</span>
+    </header>
+
+    <div id="layout">
+      <!-- Left: the ladder rail — mission, rungs (with Build), and progress. -->
+      <aside id="ladder" aria-label="Your learning ladder" hidden>
+        <div class="ladder-mission">
+          <div class="ladder-label">Mission</div>
+          <p id="mission"></p>
+        </div>
+        <div class="ladder-rungs">
+          <div class="ladder-label">Ladder</div>
+          <ol id="rungs" class="rungs"></ol>
+        </div>
+        <div class="ladder-progress">
+          <div class="ladder-label">Progress vs day one</div>
+          <ul id="progress" class="progress"></ul>
+        </div>
+        <!-- Phase 8: take your work with you — a self-contained, offline HTML. -->
+        <button type="button" id="export" class="export" hidden>
+          Export as HTML
+        </button>
+      </aside>
+
+      <!-- Middle: the conversation + composer. -->
+      <section id="chat-col">
+        <main id="chat" aria-live="polite">
+          <div id="intro" class="intro">
+            <p>What do you want to learn?</p>
+            <p class="hint">
+              e.g. <em>reinforcement learning</em>, <em>how orbits work</em>,
+              <em>the French Revolution</em>
+            </p>
+          </div>
+        </main>
+
+        <!-- The composer's role depends on the stage (topic / answer / explain);
+             app.js sets its placeholder and shows or hides it. The provider
+             dropdown (Phase 6) picks which headless CLI agent builds a rung. -->
+        <form id="composer" autocomplete="off" hidden>
+          <select id="agent" aria-label="Which AI builds this" title="Which AI builds this">
+            <!-- filled by app.js from /api/agents -->
+          </select>
+          <input
+            id="prompt"
+            name="prompt"
+            placeholder="What do you want to learn?"
+            aria-label="Your answer"
+            autofocus
+          />
+          <button type="submit" id="send">Send</button>
+        </form>
+      </section>
+
+      <!-- Right: the session workspace — files the agent wrote, plus Run. -->
+      <aside id="workspace" aria-label="Workspace">
+        <div class="ws-head">
+          <span>Workspace</span>
+          <button type="button" id="run" disabled>Run</button>
+        </div>
+        <ul id="files" class="files">
+          <li class="files-empty">Files the AI builds appear here.</li>
+        </ul>
+        <div id="viewer" class="viewer" hidden>
+          <div class="viewer-head"><span id="viewer-name"></span></div>
+          <pre id="viewer-body"></pre>
+        </div>
+      </aside>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

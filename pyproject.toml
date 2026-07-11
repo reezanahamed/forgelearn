@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forgelearn"
+version = "0.1.0"
+description = "ForgeLearn — a browser platform that teaches by building: an AI interviews you, designs a ladder of tiny projects, and builds each one live while teaching."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ForgeLearn" }]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+forgelearn = "forgelearn.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the static browser UI inside the package so a non-editable install still
+# serves the frontend.
+forgelearn = ["frontend/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
