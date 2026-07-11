@@ -41,8 +41,9 @@ const STAGE_LABEL = {
 };
 
 const chat = document.getElementById("chat");
-const intro = document.getElementById("intro");
+let intro = document.getElementById("intro"); // rebuilt by "New session"
 const form = document.getElementById("composer");
+const newBtn = document.getElementById("new-session");
 const promptEl = document.getElementById("prompt");
 const agentEl = document.getElementById("agent");
 const gradeEl = document.getElementById("grade");
@@ -173,6 +174,7 @@ async function startLearning(topic) {
   if (!data) return;
   state.session = data.id;
   rememberSession(data.id);
+  newBtn.hidden = false;
   state.questions = data.interview_questions || [];
   state.answers = [];
   state.qIndex = 0;
@@ -211,6 +213,7 @@ function applySession(session) {
   state.activeLessonId = session.active_lesson_id;
   renderRail(session);
   exportBtn.hidden = !session.mission;
+  newBtn.hidden = false;
 }
 
 function renderRail(session) {
@@ -553,6 +556,9 @@ function rememberSession(id) { try { localStorage.setItem(SESSION_KEY, id); } ca
 function lastSessionId() { try { return localStorage.getItem(SESSION_KEY); } catch { return null; } }
 function forgetSession() { try { localStorage.removeItem(SESSION_KEY); } catch {} }
 
+// Stages that belong to the guided-lesson flow (so we skip old ladder sessions).
+const COURSE_STAGES = new Set(["interview", "syllabus", "learning", "complete"]);
+
 async function tryResume() {
   const id = lastSessionId();
   if (!id) return false;
@@ -562,15 +568,68 @@ async function tryResume() {
     if (!resp.ok) { forgetSession(); return false; }
     session = await resp.json();
   } catch { return false; }
+  // An old-format or blank session should not hijack the fresh start screen.
+  if (!COURSE_STAGES.has(session.stage)) { forgetSession(); return false; }
+
   if (intro) intro.remove();
   state.session = session.id;
   rememberSession(session.id);
+  newBtn.hidden = false;
   if (gradeEl && session.reading_grade) gradeEl.value = String(session.reading_grade);
+
+  if (session.stage === "interview") {
+    state.stage = "interview";
+    state.questions = session.interview_questions || [];
+    state.answers = [];
+    state.qIndex = 0;
+    addTutorMessage("Welcome back. Let's pick up your interview.");
+    askNextQuestion();
+    return true;
+  }
+
   applySession(session);
   refreshFiles();
   addTutorMessage('Welcome back to "' + (session.mission || session.topic) + '". Pick a lesson on the left to keep going.');
   composerRole(false);
   return true;
+}
+
+/** Start over: forget the current session (kept on the server) and show a blank slate. */
+function newSession() {
+  if (source) { source.close(); source = null; }
+  forgetSession();
+  state.session = null;
+  state.stage = "new";
+  state.lessons = [];
+  state.activeLessonId = null;
+  state.questions = [];
+  state.answers = [];
+  state.qIndex = 0;
+  state.checkKind = null;
+  chat.textContent = "";
+  railEl.hidden = true;
+  editorWrap.hidden = true;
+  exportBtn.hidden = true;
+  newBtn.hidden = true;
+  runBtn.disabled = true;
+  hintBtn.disabled = true;
+  checkWorkBtn.disabled = true;
+  filesEl.textContent = "";
+  filesEl.append(el("li", "files-empty", "Files appear here as you build."));
+  intro = el("div", "intro");
+  intro.id = "intro";
+  intro.append(el("p", null, "What do you want to learn?"));
+  chat.append(intro);
+  composerRole(true, "What do you want to learn?");
+  showPastSessions();
+}
+
+/** Delete a saved session on the server (so it stops resuming / leaves the picker). */
+async function deleteSession(id) {
+  try {
+    await fetch(C_SESSION + "?session=" + encodeURIComponent(id), { method: "DELETE" });
+  } catch { /* best-effort */ }
+  if (lastSessionId() === id) forgetSession();
 }
 
 async function showPastSessions() {
@@ -588,9 +647,17 @@ async function showPastSessions() {
   const list = el("ul", "resume-list");
   for (const s of sessions) {
     const li = el("li", "resume-item");
-    li.append(el("span", "resume-topic", s.mission || s.topic || "Untitled"));
-    li.append(el("span", "resume-meta", (STAGE_LABEL[s.stage] || s.stage) + " · " + shortDate(s.created_at)));
-    li.addEventListener("click", () => openPastSession(s.id));
+    const info = el("div", "resume-info");
+    info.append(el("span", "resume-topic", s.mission || s.topic || "Untitled"));
+    info.append(el("span", "resume-meta", (STAGE_LABEL[s.stage] || s.stage) + " · " + shortDate(s.created_at)));
+    info.addEventListener("click", () => openPastSession(s.id));
+    const del = el("button", "resume-del", "✕");
+    del.title = "Delete this session";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(s.id).then(() => li.remove());
+    });
+    li.append(info, del);
     list.append(li);
   }
   box.append(list);
@@ -661,6 +728,7 @@ runBtn.addEventListener("click", () => {
   if (source || !state.session) return;
   runStream(RUN_PATH + "?session=" + encodeURIComponent(state.session), "Run");
 });
+newBtn.addEventListener("click", newSession);
 hintBtn.addEventListener("click", getHint);
 saveBtn.addEventListener("click", saveEditor);
 checkWorkBtn.addEventListener("click", checkMyWork);

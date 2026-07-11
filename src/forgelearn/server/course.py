@@ -110,6 +110,16 @@ def session(session: str = Query(..., min_length=1)) -> JSONResponse:
     return JSONResponse(_payload(found))
 
 
+@router.delete(COURSE_SESSION_PATH)
+def delete_session(session: str = Query(..., min_length=1)) -> JSONResponse:
+    """Delete a session (so it stops auto-resuming and leaves the picker)."""
+    try:
+        CourseOrchestrator().delete_session(session)
+    except ForgeLearnError as exc:
+        return _error(exc)
+    return JSONResponse({"deleted": session})
+
+
 @router.get(COURSE_SESSIONS_PATH)
 def sessions() -> JSONResponse:
     """List saved sessions (newest first) for a resume picker."""

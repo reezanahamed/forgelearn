@@ -101,6 +101,12 @@ class SessionStore:
             sessions = list(self._sessions.values())
         return sorted(sessions, key=lambda s: s.created_at, reverse=True)
 
+    def delete(self, session_id: str) -> None:
+        """Remove a session if present (a no-op when it is not)."""
+        with self._lock:
+            self._sessions.pop(session_id, None)
+        _logger.debug("deleted session %s", session_id)
+
 
 _store: SessionStore | None = None
 _store_lock = threading.Lock()

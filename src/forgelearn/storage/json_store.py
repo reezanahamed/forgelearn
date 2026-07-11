@@ -127,6 +127,24 @@ class JsonSessionStore(SessionStore):
         _logger.debug("saved session %s (stage=%s)", session.id, session.stage.value)
         return session
 
+    def delete(self, session_id: str) -> None:
+        """Remove a session from the cache and delete its file (no-op if absent).
+
+        Raises:
+            StorageError: If the file exists but cannot be removed.
+        """
+        with self._lock:
+            self._sessions.pop(session_id, None)
+            try:
+                path = self._path_for(session_id)
+            except StorageError:
+                return
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise StorageError(f"could not delete session {session_id!r}: {exc}") from exc
+        _logger.debug("deleted session %s", session_id)
+
     def exists(self, session_id: str) -> bool:
         """Return whether a session is cached or persisted on disk."""
         with self._lock:

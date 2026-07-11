@@ -163,3 +163,13 @@ def test_open_unknown_session_is_clean_400(client: TestClient) -> None:
     resp = client.post(course_mod.COURSE_OPEN_PATH, json={"session": "nope", "lesson": "u1"})
     assert resp.status_code == 400
     assert "error" in resp.json()
+
+
+def test_delete_session_removes_it(client: TestClient) -> None:
+    """Deleting a session drops it from the store so it no longer resumes."""
+    sid = client.post(course_mod.COURSE_START_PATH, json={"topic": "rl"}).json()["id"]
+    assert client.get(course_mod.COURSE_SESSION_PATH, params={"session": sid}).status_code == 200
+    dele = client.delete(course_mod.COURSE_SESSION_PATH, params={"session": sid})
+    assert dele.status_code == 200
+    # It is gone now (a 400, not resumable).
+    assert client.get(course_mod.COURSE_SESSION_PATH, params={"session": sid}).status_code == 400

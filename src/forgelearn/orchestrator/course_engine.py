@@ -299,6 +299,10 @@ class CourseOrchestrator:
         """Return every stored session, newest first."""
         return self._store.list_sessions()
 
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session so it no longer resumes or shows in the picker."""
+        self._store.delete(session_id)
+
     # --- Internals -----------------------------------------------------------
 
     def _ask_json(self, prompt: str) -> dict:
