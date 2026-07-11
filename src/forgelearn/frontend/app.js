@@ -805,7 +805,16 @@ form.addEventListener("submit", (e) => {
 
 runBtn.addEventListener("click", () => {
   if (source || !state.session) return;
-  runStream(RUN_PATH + "?session=" + encodeURIComponent(state.session), "Run");
+  runStream(RUN_PATH + "?session=" + encodeURIComponent(state.session), "Run", (endState) => {
+    // Running the code is not the finish line: the teach-back is. Nudge the
+    // learner toward it once the run succeeds while the gate is still open.
+    if (endState === "done" && state.stage === "teachback") {
+      addTutorMessage(
+        "Nice, it runs! This project isn't finished yet. To complete it and unlock " +
+          "the next one, explain how it works in the box below and press Send.",
+      );
+    }
+  });
 });
 
 /* --- Resume picker: reopen a saved session (Phase 8) ---------------------- */
