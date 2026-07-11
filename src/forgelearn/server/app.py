@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from forgelearn import __version__
 from forgelearn.common.logging import get_logger
 from forgelearn.config import get_settings
+from forgelearn.server.course import router as course_router
 from forgelearn.server.learn import router as learn_router
 from forgelearn.server.routes import router
 
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
     app.include_router(learn_router)  # the Phase 7 learning-method API
+    app.include_router(course_router)  # the guided-lesson redesign API
 
     frontend_dir = get_settings().frontend_dir
     if frontend_dir.is_dir():

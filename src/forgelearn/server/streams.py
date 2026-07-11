@@ -139,6 +139,59 @@ def stream_build_sse(
     )
 
 
+def _demo_events(
+    session_id: str, lesson_id: str | None, agent_name: str, grade: int | None
+) -> Iterator[AgentEvent]:
+    """Build a lesson's worked example (redesign), streaming the agent's activity.
+
+    Mirrors the build stream but drives the course engine: it composes the demo
+    build prompt, runs the chosen provider into the session workspace so the files
+    persist, and on a clean finish marks the demo built (which opens the learner's
+    own build stage).
+    """
+    from forgelearn.orchestrator.course_engine import CourseOrchestrator
+
+    orchestrator = CourseOrchestrator()
+    prompt = orchestrator.demo_instruction(session_id, lesson_id, grade)
+    workspace = get_or_create(session_id)
+    agent = get_agent(agent_name)
+
+    succeeded = False
+    for event in agent.run_events(prompt, workspace):
+        if event.kind is EventKind.DONE:
+            succeeded = True
+        yield event
+    if succeeded:
+        orchestrator.mark_demo_built(session_id, lesson_id)
+
+
+def stream_demo_sse(
+    session_id: str,
+    lesson_id: str | None,
+    agent_name: str,
+    grade: int | None = None,
+) -> Iterator[str]:
+    """Build a lesson's worked example and yield SSE frames (redesign).
+
+    Args:
+        session_id: The learning session whose lesson to demo.
+        lesson_id: The lesson to demo; ``None`` uses the active lesson.
+        agent_name: Registered provider to build with.
+        grade: Optional school grade level for the narration.
+
+    Yields:
+        SSE frame strings, ending once the demo completes or fails.
+    """
+    _logger.info(
+        "starting demo stream: session=%r lesson=%r agent=%r",
+        session_id, lesson_id, agent_name,
+    )
+    return _sse_from_events(
+        _demo_events(session_id, lesson_id, agent_name, grade),
+        context=f"demo (session={session_id!r})",
+    )
+
+
 def stream_run_sse(session_id: str) -> Iterator[str]:
     """Run the session's built project and yield its output as SSE frames.
 

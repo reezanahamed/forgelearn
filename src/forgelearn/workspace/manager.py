@@ -239,6 +239,64 @@ def read_file(session_id: str, rel_path: str) -> str:
     return text
 
 
+def write_file(session_id: str, rel_path: str, content: str) -> None:
+    """Write text to a workspace file, for the in-browser editor (redesign).
+
+    Creates the session workspace and any parent directories as needed, so a
+    learner can save a brand-new file. Path handling and traversal defence are the
+    same as the read side.
+
+    Args:
+        session_id: The session that owns the file.
+        rel_path: Workspace-relative path of the file to write.
+        content: The text to write (UTF-8).
+
+    Raises:
+        WorkspaceError: If the session/path is invalid, the path escapes the
+            workspace, the content is too large, or the write fails.
+    """
+    root = get_or_create(session_id)
+    target = _resolve_within(root, rel_path)
+    if target == root.resolve():
+        raise WorkspaceError(f"not a file path: {rel_path!r}")
+    cap = get_settings().workspace_max_edit_bytes
+    if len(content.encode("utf-8")) > cap:
+        raise WorkspaceError(f"file too large to save (max {cap} bytes)")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise WorkspaceError(f"could not write {rel_path!r}: {exc}") from exc
+    _logger.debug("wrote %s to workspace %s", rel_path, session_id)
+
+
+def workspace_summary(session_id: str) -> str:
+    """Compose a text summary of a session's files for the AI to review.
+
+    Lists each file and inlines its (truncated) text, so the build-review and hint
+    prompts can read what the learner actually wrote. Binary/oversized files are
+    noted, not dumped. An empty or missing workspace yields a short marker.
+
+    Args:
+        session_id: The session whose workspace to summarize.
+
+    Returns:
+        A plain-text summary: one ``### path`` heading and a fenced body per file.
+    """
+    entries = list_files(session_id)
+    if not entries:
+        return "(the learner has not created any files yet)"
+    parts: list[str] = []
+    for entry in entries:
+        try:
+            text = read_file(session_id, entry.path)
+        except WorkspaceError:
+            parts.append(f"### {entry.path}\n(could not read this file)")
+            continue
+        parts.append(f"### {entry.path}\n```\n{text}\n```")
+    return "\n\n".join(parts)
+
+
 def read_bytes(session_id: str, rel_path: str) -> bytes:
     """Read a workspace file's full, untruncated bytes.
 

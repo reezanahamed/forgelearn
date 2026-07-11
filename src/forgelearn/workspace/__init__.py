@@ -26,6 +26,8 @@ from forgelearn.workspace.manager import (
     read_bytes,
     read_file,
     workspace_path,
+    workspace_summary,
+    write_file,
 )
 from forgelearn.workspace.runner import run_workspace
 
@@ -40,4 +42,6 @@ __all__ = [
     "read_file",
     "run_workspace",
     "workspace_path",
+    "workspace_summary",
+    "write_file",
 ]

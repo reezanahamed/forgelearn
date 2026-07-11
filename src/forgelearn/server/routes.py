@@ -22,6 +22,7 @@ import mimetypes
 
 from fastapi import APIRouter, Query
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
 
 from forgelearn import __version__
 from forgelearn.agents import available_agents
@@ -30,7 +31,7 @@ from forgelearn.common.logging import get_logger
 from forgelearn.config import get_settings
 from forgelearn.server.sse import SSE_HEADERS, SSE_MEDIA_TYPE
 from forgelearn.server.streams import stream_agent_sse, stream_run_sse
-from forgelearn.workspace import list_files, read_bytes, read_file
+from forgelearn.workspace import list_files, read_bytes, read_file, write_file
 
 _logger = get_logger("server.routes")
 
@@ -43,7 +44,16 @@ STREAM_PATH = "/api/stream"
 FILES_PATH = "/api/files"
 FILE_PATH = "/api/file"
 FILE_RAW_PATH = "/api/file/raw"
+FILE_SAVE_PATH = "/api/file/save"
 RUN_PATH = "/api/run"
+
+
+class SaveFileRequest(BaseModel):
+    """Body for :func:`save_file` — the learner's edited file (redesign)."""
+
+    session: str = Field(..., min_length=1, description="Session that owns the file.")
+    path: str = Field(..., min_length=1, description="Workspace-relative file path.")
+    content: str = Field("", description="The full new text of the file.")
 
 _INDEX_FILENAME = "index.html"
 
@@ -176,6 +186,24 @@ def file_raw(
         return JSONResponse({"error": str(exc)}, status_code=400)
     media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
     return Response(content=data, media_type=media_type)
+
+
+@router.post(FILE_SAVE_PATH)
+def save_file(body: SaveFileRequest) -> JSONResponse:
+    """Save the learner's edited file into their session workspace (redesign).
+
+    Args:
+        body: The session, workspace-relative path, and full new content.
+
+    Returns:
+        ``{"saved": path}`` on success; a bad session, an escaping path, or an
+        oversized file yields a 400.
+    """
+    try:
+        write_file(body.session, body.path, body.content)
+    except WorkspaceError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"saved": body.path})
 
 
 @router.get(RUN_PATH)

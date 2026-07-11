@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     # Cap on how many bytes of a workspace file the browser file viewer will read,
     # so opening a huge/binary file can't exhaust memory or flood the response.
     workspace_max_view_bytes: int = 200_000
+    # Cap on how many bytes the in-browser editor may save to a workspace file
+    # (redesign), so a paste can't write an enormous file.
+    workspace_max_edit_bytes: int = 500_000
 
     @field_validator("workspace_dir", "sessions_dir")
     @classmethod
