@@ -21,7 +21,11 @@
 const AGENTS_PATH = "/api/agents";
 const FILES_PATH = "/api/files";
 const FILE_PATH = "/api/file";
+const FILE_RAW_PATH = "/api/file/raw";
 const RUN_PATH = "/api/run";
+
+// Extensions the viewer renders as an image instead of decoding as text.
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"]);
 const LEARN_START = "/api/learn/start";
 const LEARN_INTERVIEW = "/api/learn/interview";
 const LEARN_SESSION = "/api/learn/session";
@@ -67,7 +71,8 @@ const runBtn = document.getElementById("run");
 const filesEl = document.getElementById("files");
 const viewer = document.getElementById("viewer");
 const viewerName = document.getElementById("viewer-name");
-const viewerBody = document.getElementById("viewer-body");
+const viewerContent = document.getElementById("viewer-content");
+const viewerClose = document.getElementById("viewer-close");
 const ladderEl = document.getElementById("ladder");
 const missionEl = document.getElementById("mission");
 const rungsEl = document.getElementById("rungs");
@@ -96,9 +101,15 @@ function el(tag, className, text) {
   return node;
 }
 
-/** Keep the newest content in view as the conversation grows. */
+/** Keep the newest content in view as the conversation grows.
+ *
+ * Scrolls on the next animation frame so it runs AFTER the browser lays out the
+ * just-appended content; scrolling synchronously can land short of the true
+ * bottom (leaving the last line clipped) when the new content changes height. */
 function scrollToEnd() {
-  chat.scrollTop = chat.scrollHeight;
+  requestAnimationFrame(() => {
+    chat.scrollTop = chat.scrollHeight;
+  });
 }
 
 /** Append the learner's message as a right-aligned bubble. */
@@ -552,23 +563,56 @@ async function refreshFiles() {
   runBtn.disabled = source !== null;
 }
 
-/** Show one file's contents in the viewer pane. */
+/** Open a file in the modal viewer: images render as pictures, code as text. */
 async function openFile(path) {
-  try {
-    const url =
-      FILE_PATH +
+  viewerName.textContent = path;
+  viewerContent.textContent = "";
+  const ext = (path.split(".").pop() || "").toLowerCase();
+
+  if (IMAGE_EXTS.has(ext)) {
+    // Render the real bytes as an image instead of decoding them as text.
+    const img = el("img", "viewer-img");
+    img.alt = path;
+    img.src =
+      FILE_RAW_PATH +
       "?session=" + encodeURIComponent(state.session) +
       "&path=" + encodeURIComponent(path);
-    const resp = await fetch(url);
+    viewerContent.append(img);
+    viewer.hidden = false;
+    return;
+  }
+
+  try {
+    const resp = await fetch(
+      FILE_PATH +
+        "?session=" + encodeURIComponent(state.session) +
+        "&path=" + encodeURIComponent(path),
+    );
     if (!resp.ok) return;
     const data = await resp.json();
-    viewerName.textContent = path;
-    viewerBody.textContent = data.content || "";
+    const pre = el("pre", "viewer-pre");
+    pre.textContent = data.content || "";
+    viewerContent.append(pre);
     viewer.hidden = false;
   } catch {
     /* viewing a file is best-effort */
   }
 }
+
+/** Hide the file viewer modal. */
+function closeViewer() {
+  viewer.hidden = true;
+  viewerContent.textContent = "";
+}
+
+viewerClose.addEventListener("click", closeViewer);
+// Click on the dark backdrop (outside the panel) closes the viewer.
+viewer.addEventListener("click", (e) => {
+  if (e.target === viewer) closeViewer();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !viewer.hidden) closeViewer();
+});
 
 /** Human-readable byte size, e.g. "1.2 KB". */
 function formatSize(bytes) {

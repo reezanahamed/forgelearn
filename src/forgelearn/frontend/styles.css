@@ -259,32 +259,84 @@ body {
   font-size: 11px;
 }
 
-/* The file viewer, shown when a file is clicked. */
+/* The file viewer: a centered modal so code is readable and images render big. */
 .viewer {
-  border-top: 1px solid var(--hairline);
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.viewer[hidden] {
+  display: none;
+}
+
+.viewer-panel {
+  background: Canvas;
+  width: min(1000px, 96vw);
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
-  max-height: 45%;
-  min-height: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
 }
 
 .viewer-head {
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
-  opacity: 0.7;
+  font-size: 13px;
   border-bottom: 1px solid var(--hairline);
   word-break: break-all;
 }
 
-.viewer-body,
-.viewer pre {
-  margin: 0;
-  padding: 10px 12px;
+#viewer-close {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+#viewer-close:hover {
+  background: var(--step-bg);
+  opacity: 1;
+}
+
+.viewer-content {
   overflow: auto;
+  min-height: 0;
+}
+
+.viewer-pre {
+  margin: 0;
+  padding: 14px 16px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12.5px;
+  font-size: 13.5px;
+  line-height: 1.5;
   white-space: pre;
+}
+
+.viewer-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  padding: 14px;
 }
 
 /* On a narrow screen, stack ladder + workspace around the conversation. */

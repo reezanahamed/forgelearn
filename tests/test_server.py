@@ -24,6 +24,7 @@ from forgelearn.server.app import create_app
 from forgelearn.server.routes import (
     AGENTS_PATH,
     FILE_PATH,
+    FILE_RAW_PATH,
     FILES_PATH,
     RUN_PATH,
 )
@@ -250,6 +251,25 @@ def test_file_endpoint_rejects_traversal(client: TestClient, ws_root: Path) -> N
     resp = client.get(
         FILE_PATH, params={"session": "sess03", "path": "../../secret"}
     )
+    assert resp.status_code == 400
+
+
+def test_file_raw_serves_bytes_with_type(client: TestClient, ws_root: Path) -> None:
+    """/api/file/raw returns the exact bytes with a guessed content type."""
+    from forgelearn.workspace import get_or_create
+
+    raw = b"\x89PNG\r\n\x1a\nnot-a-real-image-but-bytes"
+    (get_or_create("sess0img") / "plot.png").write_bytes(raw)
+    resp = client.get(FILE_RAW_PATH, params={"session": "sess0img", "path": "plot.png"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/png")
+    assert resp.content == raw
+
+
+def test_file_raw_rejects_traversal(client: TestClient, ws_root: Path) -> None:
+    """A path escaping the workspace is a 400 on the raw endpoint too."""
+    _seed_project("sess0trav", "ok.py", "x = 1")
+    resp = client.get(FILE_RAW_PATH, params={"session": "sess0trav", "path": "../../secret"})
     assert resp.status_code == 400
 
 

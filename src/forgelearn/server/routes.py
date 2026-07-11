@@ -18,8 +18,10 @@ browser's ``EventSource`` client can only issue GETs; each returns a
 
 from __future__ import annotations
 
+import mimetypes
+
 from fastapi import APIRouter, Query
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from forgelearn import __version__
 from forgelearn.agents import available_agents
@@ -28,7 +30,7 @@ from forgelearn.common.logging import get_logger
 from forgelearn.config import get_settings
 from forgelearn.server.sse import SSE_HEADERS, SSE_MEDIA_TYPE
 from forgelearn.server.streams import stream_agent_sse, stream_run_sse
-from forgelearn.workspace import list_files, read_file
+from forgelearn.workspace import list_files, read_bytes, read_file
 
 _logger = get_logger("server.routes")
 
@@ -40,6 +42,7 @@ AGENTS_PATH = "/api/agents"
 STREAM_PATH = "/api/stream"
 FILES_PATH = "/api/files"
 FILE_PATH = "/api/file"
+FILE_RAW_PATH = "/api/file/raw"
 RUN_PATH = "/api/run"
 
 _INDEX_FILENAME = "index.html"
@@ -146,6 +149,33 @@ def file(
     except WorkspaceError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse({"path": path, "content": content})
+
+
+@router.get(FILE_RAW_PATH)
+def file_raw(
+    session: str = Query(..., min_length=1, description="Session that owns the file."),
+    path: str = Query(..., min_length=1, description="Workspace-relative file path."),
+) -> Response:
+    """Serve a workspace file's raw bytes so the browser can render it directly.
+
+    Used by the viewer to show images (a PNG plot, an SVG) as pictures instead of
+    garbled text. The content type is guessed from the extension. Path handling and
+    traversal defence are the same as the text endpoint (in the workspace layer).
+
+    Args:
+        session: The session that owns the file (required).
+        path: Workspace-relative path of the file to read (required).
+
+    Returns:
+        The raw file bytes with a guessed media type; a missing file, bad session,
+        or a path escaping the workspace yields a 400.
+    """
+    try:
+        data = read_bytes(session, path)
+    except WorkspaceError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return Response(content=data, media_type=media_type)
 
 
 @router.get(RUN_PATH)

@@ -91,11 +91,19 @@
         <ul id="files" class="files">
           <li class="files-empty">Files the AI builds appear here.</li>
         </ul>
-        <div id="viewer" class="viewer" hidden>
-          <div class="viewer-head"><span id="viewer-name"></span></div>
-          <pre id="viewer-body"></pre>
-        </div>
       </aside>
+    </div>
+
+    <!-- File viewer: a roomy modal so code is readable and images render as
+         pictures (click a file to open; click the backdrop or ✕ to close). -->
+    <div id="viewer" class="viewer" hidden>
+      <div class="viewer-panel">
+        <div class="viewer-head">
+          <span id="viewer-name"></span>
+          <button type="button" id="viewer-close" aria-label="Close">✕</button>
+        </div>
+        <div id="viewer-content" class="viewer-content"></div>
+      </div>
     </div>
 
     <script src="/static/app.js"></script>
