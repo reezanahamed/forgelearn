@@ -309,18 +309,35 @@ function buildRung(projectId) {
 
 /* --- Stage 4: the teach-back gate ----------------------------------------- */
 
-/** Prompt the learner to explain what they built. */
+/**
+ * Guide the learner through the teach-back: what it is, that a rough attempt is
+ * fine, and where to look for a refresher. Shared by a fresh build and a resumed
+ * session so the explanation is always clear (on resume the build chat is gone,
+ * so this is the only guidance the learner has).
+ */
+function promptTeachBack(project, opener) {
+  const concept = project ? `"${project.you_learn}"` : "what you just built";
+  addTutorMessage(
+    opener +
+      " Now a quick teach-back: in your own words, explain how " +
+      concept +
+      " works, like you're teaching a friend. There's no wrong answer here, a rough " +
+      "try is enough. I'll ask a follow-up or two, then the next project unlocks.",
+  );
+  addTutorMessage(
+    "Need a refresher first? The files you built are on the right: click one to read " +
+      "it, or press Run to watch it work. Then type your explanation below and press Send.",
+  );
+  composerRole(true, "Explain it in your own words, like teaching a friend…");
+}
+
+/** Prompt the learner to explain what they just built (fresh build). */
 async function openTeachBack(projectId) {
   await refreshSession(); // reflect the BUILT status server-side
   state.stage = "teachback";
   state.activeProjectId = projectId;
   const project = state.projects.find((p) => p.id === projectId);
-  addTutorMessage(
-    "Now teach it back: in your own words, explain how " +
-      (project ? `"${project.you_learn}"` : "this") +
-      " actually works. Explaining it is how it sticks.",
-  );
-  composerRole(true, "Explain how it works, in your own words…");
+  promptTeachBack(project, "You built it. 🎉");
 }
 
 /** Submit an explanation; render the verdict; unlock or ask to try again. */
@@ -686,11 +703,7 @@ function resumeSession(session) {
 
   if (stage === "teachback") {
     const project = state.projects.find((p) => p.id === state.activeProjectId);
-    addTutorMessage(
-      "You'd built this one. Teach it back to unlock the next: explain how " +
-        (project ? `"${project.you_learn}"` : "it") + " works.",
-    );
-    composerRole(true, "Explain how it works, in your own words…");
+    promptTeachBack(project, "You'd already built this project.");
   } else if (stage === "complete") {
     addTutorMessage("🎉 You'd finished every rung. Export it below to keep it.");
     composerRole(false);
