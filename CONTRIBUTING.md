@@ -17,10 +17,12 @@ To just try it, clone this repo. To contribute code, fork it first and clone you
 # try it
 git clone https://github.com/reezanahamed/forgelearn.git && cd forgelearn
 # or, to contribute: git clone https://github.com/<your-username>/forgelearn.git && cd forgelearn
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 forgelearn        # open http://localhost:8000
 ```
+
+On Ubuntu/Debian, use `python3` (not `python`), and if `venv` fails with "ensurepip is not available", run `sudo apt install python3-venv` first. The [README](README.md#install) also documents a [uv](https://docs.astral.sh/uv/)-based install that avoids these system-Python issues.
 
 You need at least one headless coding-agent CLI installed and authenticated, `claude` (Claude Code) or `codex` (OpenAI Codex), for the live "Build" step. Everything else (interview, ladder, resume, export) works regardless.
 

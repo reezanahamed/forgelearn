@@ -10,23 +10,40 @@ You type a topic. The AI interviews you, generates a ladder of tiny projects siz
 
 > Early project. Feedback and issues welcome.
 
-## Install (development)
+## Install
+
+Needs **Python 3.10 or newer** and at least one headless coding-agent CLI installed and authenticated: `claude` (Claude Code) by default, or `codex` (OpenAI Codex).
+
+### Option A: with uv (recommended)
+
+[uv](https://docs.astral.sh/uv/) manages the virtual environment and Python for you, so it avoids the common Ubuntu/Debian `python` and `ensurepip` errors below.
 
 ```bash
+# install uv once (other methods: https://docs.astral.sh/uv/getting-started/installation/)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 git clone https://github.com/reezanahamed/forgelearn.git && cd forgelearn
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv venv
+uv pip install -e ".[dev]"
+uv run forgelearn        # starts the server on http://localhost:8000
 ```
 
-You also need at least one headless coding-agent CLI installed and authenticated: `claude` (Claude Code) by default, or `codex` (OpenAI Codex).
+### Option B: with python and venv
+
+Use `python3` (on Ubuntu/Debian `python` often isn't installed). If `venv` fails with *"ensurepip is not available"*, install the venv package first:
+
+```bash
+sudo apt install python3-venv        # Debian/Ubuntu only, if the next line fails
+
+git clone https://github.com/reezanahamed/forgelearn.git && cd forgelearn
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+forgelearn               # starts the server on http://localhost:8000
+```
 
 ## Run
 
-```bash
-forgelearn        # starts the server on http://localhost:8000
-```
-
-Open the URL, type what you want to learn, and follow the flow. From here on it is all in the browser.
+Once installed, start the server (`forgelearn`, or `uv run forgelearn` if you used uv without activating the venv), then open http://localhost:8000. Type what you want to learn and follow the flow. From here on it is all in the browser.
 
 ## Switch the AI (provider)
 
