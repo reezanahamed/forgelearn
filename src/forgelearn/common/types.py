@@ -100,7 +100,95 @@ class SessionStage(str, Enum):
     LADDER = "ladder"  # mission + ladder ready; the active rung awaits building
     BUILDING = "building"  # the agent is building the active rung right now
     TEACHBACK = "teachback"  # the rung is built; awaiting the learner's explanation
+    SYLLABUS = "syllabus"  # (redesign) course syllabus generated; lessons await
+    LEARNING = "learning"  # (redesign) the learner is inside a lesson
     COMPLETE = "complete"  # every rung passed its teach-back
+
+
+class LessonStage(str, Enum):
+    """Where the learner is inside a single lesson (the redesign's inner loop).
+
+    Each lesson walks through: read the concept and play the interactive widget,
+    answer a quick check, watch the AI build a worked example, then build your own
+    version and get it reviewed. The browser reads this to show the right panel.
+    """
+
+    LEARN = "learn"  # reading the concept + playing the interactive widget
+    CHECK = "check"  # answering the understanding question, awaiting the verdict
+    DEMO = "demo"  # the AI is building the worked example to watch
+    BUILD = "build"  # the learner builds their own version, awaiting review
+    DONE = "done"  # lesson complete, next unlocked
+
+
+class Widget(BaseModel):
+    """A self-contained interactive element the learner plays with (the redesign).
+
+    Brilliant-style: a slider, drag-and-drop, or canvas manipulative the AI
+    generates as one self-contained HTML document (inline CSS/JS, no external
+    requests). The browser renders it in a sandboxed iframe. ``html`` stays empty
+    until the lesson content is generated.
+
+    Attributes:
+        title: A short label shown above the widget.
+        html: A complete, self-contained HTML document for the manipulative.
+        caption: One line telling the learner what to try.
+    """
+
+    title: str = ""
+    html: str = ""
+    caption: str = ""
+
+
+class Check(BaseModel):
+    """A quick understanding question inside a lesson (the redesign).
+
+    Graded by the AI at answer time (no stored answer key), so it works for both
+    multiple-choice and short free-text answers.
+
+    Attributes:
+        question: The question text.
+        kind: ``"mcq"`` or ``"short"``.
+        options: Answer options for a multiple-choice question.
+    """
+
+    question: str = ""
+    kind: str = "short"
+    options: list[str] = Field(default_factory=list)
+
+
+class Lesson(BaseModel):
+    """One lesson in a course (the redesign's rung).
+
+    A lesson teaches a single concept, then has the learner build it. It is filled
+    in lazily: the syllabus creates it with a title and the two build tasks; the
+    concept/widget/check are generated when the learner opens it.
+
+    Attributes:
+        id: Stable identifier, unique within the course.
+        title: Short lesson title.
+        goal: One line on what the learner will be able to do after it.
+        domain_type: ``"code"`` (real code in an editor) or ``"interactive"``
+            (a browser simulation/visual) — chosen by subject (PLAN §3a).
+        concept: Plain-English explanation with a concrete example (generated).
+        widget: The interactive manipulative (generated).
+        check: The understanding question (generated).
+        demo_task: What the AI builds as the worked example.
+        build_task: What the learner then builds themselves.
+        status: Lifecycle across the course (locked/active/complete).
+        stage: Where the learner is within this lesson.
+    """
+
+    id: str
+    title: str
+    goal: str = ""
+    domain_type: str = "code"
+    concept: str = ""
+    widget: Widget | None = None
+    check: Check | None = None
+    demo_task: str = ""
+    build_task: str = ""
+    status: ProjectStatus = ProjectStatus.LOCKED
+    stage: LessonStage = LessonStage.LEARN
 
 
 class Project(BaseModel):
@@ -179,8 +267,15 @@ class Session(BaseModel):
     current_project_id: str | None = None
     workspace_path: str | None = None
     reading_grade: int = 7
+    # --- Redesign (guided lessons): the course of lessons and the active one ---
+    lessons: list["Lesson"] = Field(default_factory=list)
+    active_lesson_id: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
     def project(self, project_id: str) -> Project | None:
         """Return the rung with ``project_id``, or ``None`` if absent."""
         return next((p for p in self.projects if p.id == project_id), None)
+
+    def lesson(self, lesson_id: str) -> "Lesson | None":
+        """Return the lesson with ``lesson_id``, or ``None`` if absent."""
+        return next((les for les in self.lessons if les.id == lesson_id), None)
