@@ -109,6 +109,74 @@ function addTutorMessage(text) {
   return msg;
 }
 
+/**
+ * Append an animated "thinking…" indicator while the AI works. Returns the node;
+ * call .remove() on it once the response (or an error) arrives.
+ */
+function showThinking(text) {
+  const msg = el("div", "msg tutor thinking");
+  const body = el("div", "tutor-body");
+  body.append(el("span", null, (text || "Thinking") + " "));
+  const dots = el("span", "dots");
+  dots.innerHTML = "<span>.</span><span>.</span><span>.</span>";
+  body.append(dots);
+  msg.append(body);
+  chat.append(msg);
+  scrollToEnd();
+  return msg;
+}
+
+/** Append a clearly-marked error card (distinct from a normal tutor message). */
+function addErrorMessage(text) {
+  const msg = el("div", "msg tutor error");
+  msg.append(el("div", "tutor-body", text));
+  chat.append(msg);
+  scrollToEnd();
+  return msg;
+}
+
+/**
+ * Turn a raw backend/agent error into clear, actionable guidance. The engine is a
+ * separate CLI (claude/codex) the user runs and authenticates in their own
+ * terminal, so its failures need translating into "here's what to do". Returns a
+ * friendly string, or null when there's no better wording than the raw message.
+ */
+function friendlyError(raw) {
+  const r = (raw || "").toLowerCase();
+  if (
+    r.includes("not logged in") ||
+    r.includes("/login") ||
+    r.includes("logged out") ||
+    r.includes("unauthorized") ||
+    r.includes("authenticat")
+  ) {
+    return (
+      "The AI engine isn't signed in. This sign-in happens in your terminal, not " +
+      "here: open a terminal and run `claude` (for Claude Code) or `codex` (for " +
+      "OpenAI Codex), complete the login, then come back and send your topic again."
+    );
+  }
+  if (r.includes("api key") || r.includes("api_key") || r.includes("invalid key")) {
+    return (
+      "The AI engine rejected its API key. Check the key or login for your agent " +
+      "CLI (claude or codex) in your terminal, then try again."
+    );
+  }
+  if (r.includes("command not found") || r.includes("no such file") || r.includes("enoent")) {
+    return (
+      "The AI engine CLI wasn't found. Install `claude` (Claude Code) or `codex` " +
+      "(OpenAI Codex) so it runs from your terminal, then try again."
+    );
+  }
+  if (r.includes("credit") || r.includes("quota") || r.includes("rate limit") || r.includes("insufficient")) {
+    return "The AI engine hit a usage or billing limit. Check your provider account, then try again. Details: " + raw;
+  }
+  if (r.includes("timed out") || r.includes("timeout")) {
+    return "The AI engine took too long and timed out. Try again; a simpler topic or a faster model can help.";
+  }
+  return null;
+}
+
 /* --- Stage 1: topic + interview ------------------------------------------- */
 
 /** Show or hide the composer and set its placeholder for the current role. */
@@ -121,7 +189,9 @@ function composerRole(show, placeholder) {
 /** Begin: send the topic, get interview questions, ask the first. */
 async function startLearning(topic) {
   addUserMessage(topic);
+  const thinking = showThinking("Reading your goal and preparing a few questions");
   const data = await postJSON(LEARN_START, { topic });
+  thinking.remove();
   if (!data) return;
 
   state.session = data.id;
@@ -158,11 +228,12 @@ function recordAnswer(answer) {
 /** Submit the interview answers; render the mission + ladder. */
 async function submitInterview() {
   composerRole(false);
-  addTutorMessage("Thanks. Designing your ladder of projects…");
+  const thinking = showThinking("Designing your ladder of projects");
   const session = await postJSON(LEARN_INTERVIEW, {
     session: state.session,
     answers: state.answers,
   });
+  thinking.remove();
   if (!session) return;
   applySession(session);
   addTutorMessage(
@@ -255,12 +326,13 @@ async function openTeachBack(projectId) {
 async function submitTeachBack(explanation) {
   addUserMessage(explanation);
   composerRole(false);
-  addTutorMessage("Thinking about your explanation…");
+  const thinking = showThinking("Thinking about your explanation");
   const data = await postJSON(LEARN_TEACHBACK, {
     session: state.session,
     project: state.activeProjectId,
     explanation,
   });
+  thinking.remove();
   if (!data) return;
 
   renderVerdict(data);
@@ -474,12 +546,15 @@ async function postJSON(url, payload) {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      addTutorMessage("Something went wrong: " + (data.error || resp.statusText));
+      const raw = data.error || resp.statusText;
+      addErrorMessage(friendlyError(raw) || "Something went wrong: " + raw);
       return null;
     }
     return data;
   } catch (e) {
-    addTutorMessage("Could not reach the server. Is it still running?");
+    addErrorMessage(
+      "Could not reach the server. Make sure `forgelearn` is still running in your terminal, then try again.",
+    );
     return null;
   }
 }
@@ -625,6 +700,18 @@ form.addEventListener("submit", (e) => {
   if (!value || source) return;
   if (intro) intro.remove();
   promptEl.value = "";
+
+  // ForgeLearn has no slash-commands. Users who saw the agent CLI's
+  // "Please run /login" message sometimes type it here; guide them instead.
+  if (value.startsWith("/")) {
+    addErrorMessage(
+      "ForgeLearn has no slash commands. A \"Please run /login\" message comes " +
+        "from your coding-agent CLI, and that login happens in your terminal: run " +
+        "`claude` (or `codex`) there to sign in, then come back and type what you " +
+        "want to learn.",
+    );
+    return;
+  }
 
   if (state.stage === "new") startLearning(value);
   else if (state.stage === "interview") recordAnswer(value);

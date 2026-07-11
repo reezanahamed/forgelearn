@@ -509,6 +509,18 @@ header h1 {
   word-break: break-word;
 }
 
+/* The animated "thinking…" indicator shown while the AI works. */
+.msg.tutor.thinking .tutor-body {
+  opacity: 0.75;
+  font-style: italic;
+}
+
+/* A clearly-marked error card with actionable guidance. */
+.msg.tutor.error .tutor-body {
+  background: rgba(224, 86, 79, 0.1);
+  border-left: 3px solid #e0564f;
+}
+
 /* The teach-back judge's verdict card. */
 .verdict {
   max-width: 52rem;
