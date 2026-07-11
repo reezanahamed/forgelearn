@@ -383,6 +383,9 @@ header h1 {
 
 #chat {
   flex: 1;
+  /* A flex item defaults to min-height:auto, which refuses to shrink below its
+     content, so overflow-y never kicks in. min-height:0 is what lets it scroll. */
+  min-height: 0;
   overflow-y: auto;
   padding: 20px;
   display: flex;
