@@ -25,6 +25,7 @@ const RUN_PATH = "/api/run";
 const LEARN_START = "/api/learn/start";
 const LEARN_INTERVIEW = "/api/learn/interview";
 const LEARN_SESSION = "/api/learn/session";
+const LEARN_SESSIONS = "/api/learn/sessions";
 const LEARN_BUILD = "/api/learn/build";
 const LEARN_TEACHBACK = "/api/learn/teachback";
 const LEARN_EXPORT = "/api/learn/export";
@@ -737,11 +738,89 @@ runBtn.addEventListener("click", () => {
   runStream(RUN_PATH + "?session=" + encodeURIComponent(state.session), "Run");
 });
 
+/* --- Resume picker: reopen a saved session (Phase 8) ---------------------- */
+
+// Friendly label for a session's stage, shown in the picker.
+const STAGE_LABEL = {
+  new: "just started",
+  interview: "in the interview",
+  ladder: "ready to build",
+  building: "mid-build",
+  teachback: "at a teach-back",
+  complete: "completed",
+};
+
+// Most saved sessions to list, so the start screen never gets overwhelming.
+const RESUME_LIMIT = 8;
+
+/** A short human date from an ISO timestamp, best-effort. */
+function shortDate(iso) {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * On the fresh start screen, list saved sessions so the learner can reopen one
+ * even if this browser has no stored id (the sessions live on the server).
+ */
+async function showPastSessions() {
+  if (!intro) return;
+  let sessions = [];
+  try {
+    const resp = await fetch(LEARN_SESSIONS);
+    if (!resp.ok) return;
+    sessions = (await resp.json()).sessions || [];
+  } catch {
+    return;
+  }
+  // Skip empty shells (started but never got a mission); newest first already.
+  sessions = sessions.filter((s) => s.mission || s.stage !== "new").slice(0, RESUME_LIMIT);
+  if (!sessions.length || !intro) return;
+
+  const box = el("div", "resume-box");
+  box.append(el("div", "resume-title", "Or pick up where you left off"));
+  const list = el("ul", "resume-list");
+  for (const s of sessions) {
+    const li = el("li", "resume-item");
+    li.append(el("span", "resume-topic", s.mission || s.topic || "Untitled session"));
+    li.append(
+      el("span", "resume-meta", (STAGE_LABEL[s.stage] || s.stage) + " · " + shortDate(s.created_at)),
+    );
+    li.addEventListener("click", () => openPastSession(s.id));
+    list.append(li);
+  }
+  box.append(list);
+  intro.append(box);
+}
+
+/** Reopen a chosen saved session and resume its UI. */
+async function openPastSession(id) {
+  let session;
+  try {
+    const resp = await fetch(LEARN_SESSION + "?session=" + encodeURIComponent(id));
+    if (!resp.ok) {
+      addErrorMessage("Could not open that session. It may have been removed.");
+      return;
+    }
+    session = await resp.json();
+  } catch {
+    addErrorMessage("Could not reach the server. Is `forgelearn` still running?");
+    return;
+  }
+  resumeSession(session);
+}
+
 // Start: fill the provider dropdown, then resume the last session if there is
-// one, else show the composer for a fresh topic.
+// one, else show the composer for a fresh topic plus any past sessions to reopen.
 async function boot() {
   await loadAgents();
   const resumed = await tryResume();
-  if (!resumed) composerRole(true, "What do you want to learn?");
+  if (!resumed) {
+    composerRole(true, "What do you want to learn?");
+    showPastSessions();
+  }
 }
 boot();

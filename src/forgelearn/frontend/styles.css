@@ -547,6 +547,58 @@ header h1 {
   }
 }
 
+/* Resume picker: reopen a saved session from the start screen. */
+.resume-box {
+  margin-top: 22px;
+  text-align: left;
+  max-width: 34rem;
+  margin-inline: auto;
+}
+
+.resume-title {
+  font-size: 13px;
+  opacity: 0.7;
+  margin-bottom: 8px;
+}
+
+.resume-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.resume-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.resume-item:hover {
+  border-color: var(--accent);
+  background: var(--step-bg);
+}
+
+.resume-topic {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resume-meta {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
 /* The teach-back judge's verdict card. */
 .verdict {
   max-width: 52rem;
