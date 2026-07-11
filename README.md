@@ -82,3 +82,7 @@ forgelearn/
 ## Contributing & feedback
 
 This is an early project and feedback is the most useful thing you can give. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to report bugs, suggest features, or send a pull request.
+
+## Credits
+
+Built with [Claude Code](https://claude.com/claude-code).
