@@ -87,7 +87,7 @@ def stream_agent_sse(
 
 
 def _build_events(
-    session_id: str, project_id: str | None, agent_name: str
+    session_id: str, project_id: str | None, agent_name: str, grade: int | None = None
 ) -> Iterator[AgentEvent]:
     """Build the orchestrator's active rung, streaming the agent's activity.
 
@@ -98,7 +98,7 @@ def _build_events(
     gate.
     """
     orchestrator = Orchestrator()
-    prompt = orchestrator.build_instruction(session_id, project_id)
+    prompt = orchestrator.build_instruction(session_id, project_id, grade)
     workspace = get_or_create(session_id)
     agent = get_agent(agent_name)
 
@@ -114,7 +114,7 @@ def _build_events(
 
 
 def stream_build_sse(
-    session_id: str, project_id: str | None, agent_name: str
+    session_id: str, project_id: str | None, agent_name: str, grade: int | None = None
 ) -> Iterator[str]:
     """Build a ladder rung for a learning session and yield SSE frames.
 
@@ -122,6 +122,7 @@ def stream_build_sse(
         session_id: The learning session whose active rung to build.
         project_id: The rung to build; ``None`` uses the session's current rung.
         agent_name: Registered provider to build with (from the dropdown).
+        grade: Optional school grade level for the build narration.
 
     Yields:
         SSE frame strings, ending once the build completes or fails.
@@ -133,7 +134,7 @@ def stream_build_sse(
         agent_name,
     )
     return _sse_from_events(
-        _build_events(session_id, project_id, agent_name),
+        _build_events(session_id, project_id, agent_name, grade),
         context=f"build (session={session_id!r})",
     )
 

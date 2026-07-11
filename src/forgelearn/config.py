@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     # The teach-back gate may ask up to this many probing follow-ups before it
     # judges (retrieval practice + desirable difficulty; TEACHING_PRINCIPLES #3/#6).
     teachback_max_probes: int = 3
+    # Default school grade the AI writes for (plain, simple English). The browser
+    # dropdown can override it per session; lower = simpler wording.
+    reading_grade_default: int = 7
 
     # --- Workspace + Run (Phase 5: run a built project from the browser) ---
     # Hard wall-clock timeout for one Run of a user's project, in seconds. Kept

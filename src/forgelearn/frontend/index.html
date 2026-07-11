@@ -64,6 +64,13 @@
           <select id="agent" aria-label="Which AI builds this" title="Which AI builds this">
             <!-- filled by app.js from /api/agents -->
           </select>
+          <select id="grade" aria-label="Explanation level" title="How simply should the AI explain?">
+            <option value="5">Grade 5</option>
+            <option value="7" selected>Grade 7</option>
+            <option value="9">Grade 9</option>
+            <option value="12">Grade 12</option>
+            <option value="14">College</option>
+          </select>
           <input
             id="prompt"
             name="prompt"

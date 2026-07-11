@@ -49,6 +49,7 @@ class StartRequest(BaseModel):
     """Body for :func:`start` — the subject the learner wants to learn."""
 
     topic: str = Field(..., min_length=1, description="What the learner wants to learn.")
+    grade: int | None = Field(None, description="School grade level to write for.")
 
 
 class InterviewRequest(BaseModel):
@@ -56,6 +57,7 @@ class InterviewRequest(BaseModel):
 
     session: str = Field(..., min_length=1, description="The session being answered.")
     answers: list[str] = Field(default_factory=list, description="Answers, in order.")
+    grade: int | None = Field(None, description="School grade level to write for.")
 
 
 class TeachBackRequest(BaseModel):
@@ -64,6 +66,7 @@ class TeachBackRequest(BaseModel):
     session: str = Field(..., min_length=1, description="The session being assessed.")
     project: str | None = Field(None, description="Rung id; defaults to the current one.")
     explanation: str = Field(..., min_length=1, description="The learner's explanation.")
+    grade: int | None = Field(None, description="School grade level to write for.")
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -94,7 +97,7 @@ def start(body: StartRequest) -> JSONResponse:
         The new session (stage ``interview``) as JSON, or a 400 on failure.
     """
     try:
-        session = Orchestrator().start(body.topic)
+        session = Orchestrator().start(body.topic, body.grade)
     except ForgeLearnError as exc:
         return _error(exc)
     return JSONResponse(_session_payload(session))
@@ -111,7 +114,7 @@ def interview(body: InterviewRequest) -> JSONResponse:
         The session (stage ``ladder``, mission + projects set) as JSON, or a 400.
     """
     try:
-        session = Orchestrator().submit_interview(body.session, body.answers)
+        session = Orchestrator().submit_interview(body.session, body.answers, body.grade)
     except ForgeLearnError as exc:
         return _error(exc)
     return JSONResponse(_session_payload(session))
@@ -166,6 +169,7 @@ def build(
     session: str = Query(..., min_length=1, description="The session whose rung to build."),
     project: str | None = Query(None, description="Rung id; defaults to the current one."),
     agent: str | None = Query(None, description="Provider to build with; else the default."),
+    grade: int | None = Query(None, description="School grade level to narrate for."),
 ) -> StreamingResponse:
     """Build the session's active rung and stream the agent's activity as SSE.
 
@@ -173,6 +177,7 @@ def build(
         session: The learning session whose rung to build.
         project: Optional rung id; defaults to the current active rung.
         agent: Optional provider override; falls back to the configured default.
+        grade: Optional school grade level for the build narration.
 
     Returns:
         A ``text/event-stream`` of the build's normalized events. A locked rung or
@@ -181,7 +186,7 @@ def build(
     agent_name = agent or get_settings().default_agent
     _logger.info("build request: session=%r project=%r agent=%r", session, project, agent_name)
     return StreamingResponse(
-        stream_build_sse(session, project, agent_name),
+        stream_build_sse(session, project, agent_name, grade),
         media_type=SSE_MEDIA_TYPE,
         headers=SSE_HEADERS,
     )
@@ -200,7 +205,9 @@ def teachback(body: TeachBackRequest) -> JSONResponse:
     """
     try:
         orchestrator = Orchestrator()
-        result = orchestrator.submit_teachback(body.session, body.project, body.explanation)
+        result = orchestrator.submit_teachback(
+            body.session, body.project, body.explanation, body.grade
+        )
         session = orchestrator.get_session(body.session)
     except ForgeLearnError as exc:
         return _error(exc)

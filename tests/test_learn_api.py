@@ -183,6 +183,13 @@ def test_export_unknown_session_is_a_clean_400(client: TestClient) -> None:
     assert "error" in resp.json()
 
 
+def test_grade_flows_into_the_session(client: TestClient) -> None:
+    """The chosen reading grade is accepted and stored on the session."""
+    resp = client.post(learn_mod.LEARN_START_PATH, json={"topic": "rl", "grade": 5})
+    assert resp.status_code == 200
+    assert resp.json()["reading_grade"] == 5
+
+
 def test_unknown_session_is_a_clean_400(client: TestClient) -> None:
     """Fetching a missing session is a 400 with a message, not a 500."""
     resp = client.get(learn_mod.LEARN_SESSION_PATH, params={"session": "nope"})

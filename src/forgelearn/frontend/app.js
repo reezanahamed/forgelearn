@@ -33,6 +33,13 @@ const LEARN_EXPORT = "/api/learn/export";
 // The last session id, stored client-side so a returning learner resumes it
 // (the sessions themselves are persisted server-side; Phase 8).
 const SESSION_KEY = "forgelearn.session";
+// The chosen "explain like grade N" reading level, remembered across visits.
+const GRADE_KEY = "forgelearn.grade";
+
+/** The currently selected reading grade (an int), defaulting to 7. */
+function currentGrade() {
+  return parseInt(gradeEl && gradeEl.value, 10) || 7;
+}
 
 // Kinds that end a stream: on these we close it and finish the turn.
 const TERMINAL = new Set(["done", "error"]);
@@ -54,6 +61,7 @@ const intro = document.getElementById("intro");
 const form = document.getElementById("composer");
 const promptEl = document.getElementById("prompt");
 const agentEl = document.getElementById("agent");
+const gradeEl = document.getElementById("grade");
 const sendBtn = document.getElementById("send");
 const runBtn = document.getElementById("run");
 const filesEl = document.getElementById("files");
@@ -191,7 +199,7 @@ function composerRole(show, placeholder) {
 async function startLearning(topic) {
   addUserMessage(topic);
   const thinking = showThinking("Reading your goal and preparing a few questions");
-  const data = await postJSON(LEARN_START, { topic });
+  const data = await postJSON(LEARN_START, { topic, grade: currentGrade() });
   thinking.remove();
   if (!data) return;
 
@@ -233,6 +241,7 @@ async function submitInterview() {
   const session = await postJSON(LEARN_INTERVIEW, {
     session: state.session,
     answers: state.answers,
+    grade: currentGrade(),
   });
   thinking.remove();
   if (!session) return;
@@ -300,6 +309,7 @@ function buildRung(projectId) {
     LEARN_BUILD +
     "?session=" + encodeURIComponent(state.session) +
     "&project=" + encodeURIComponent(projectId) +
+    "&grade=" + encodeURIComponent(currentGrade()) +
     (agent ? "&agent=" + encodeURIComponent(agent) : "");
   runStream(url, project ? project.you_build : "Build", (endState) => {
     if (endState === "done") openTeachBack(projectId);
@@ -349,6 +359,7 @@ async function submitTeachBack(explanation) {
     session: state.session,
     project: state.activeProjectId,
     explanation,
+    grade: currentGrade(),
   });
   thinking.remove();
   if (!data) return;
@@ -682,6 +693,8 @@ function resumeSession(session) {
   if (intro) intro.remove();
   state.session = session.id;
   rememberSession(session.id);
+  // Reflect this session's saved reading level in the dropdown.
+  if (gradeEl && session.reading_grade) gradeEl.value = String(session.reading_grade);
   applySession(session);
   refreshFiles();
 
@@ -826,9 +839,28 @@ async function openPastSession(id) {
   resumeSession(session);
 }
 
-// Start: fill the provider dropdown, then resume the last session if there is
-// one, else show the composer for a fresh topic plus any past sessions to reopen.
+/** Restore the saved reading grade into the dropdown and persist future changes. */
+function setUpGrade() {
+  if (!gradeEl) return;
+  try {
+    const saved = localStorage.getItem(GRADE_KEY);
+    if (saved) gradeEl.value = saved;
+  } catch {
+    /* storage disabled — the default grade still applies */
+  }
+  gradeEl.addEventListener("change", () => {
+    try {
+      localStorage.setItem(GRADE_KEY, gradeEl.value);
+    } catch {
+      /* nothing to persist to */
+    }
+  });
+}
+
+// Start: restore the reading level, fill the provider dropdown, then resume the
+// last session if there is one, else show the composer plus any past sessions.
 async function boot() {
+  setUpGrade();
   await loadAgents();
   const resumed = await tryResume();
   if (!resumed) {

@@ -121,6 +121,40 @@ def test_submit_interview_builds_mission_and_ladder(store: SessionStore) -> None
     assert "Day one" in session.progress[0].note
 
 
+def test_start_stores_and_applies_reading_grade(store: SessionStore) -> None:
+    """A chosen grade is saved on the session and sent to the engine."""
+    orc, agent = _orc(store, [_QUESTIONS])
+    session = orc.start("rl", grade=5)
+    assert session.reading_grade == 5
+    assert "GRADE 5" in agent.prompts[0]
+
+
+def test_grade_override_on_interview_updates_session(store: SessionStore) -> None:
+    """Passing a new grade later changes the session and the next prompt."""
+    orc, agent = _orc(store, [_QUESTIONS, _LADDER])
+    session = orc.start("rl", grade=7)
+    session = orc.submit_interview(session.id, ["a", "b", "c"], grade=5)
+    assert session.reading_grade == 5
+    assert "GRADE 5" in agent.prompts[-1]
+
+
+def test_generated_content_is_stripped_of_em_dashes(store: SessionStore) -> None:
+    """Any em dash the model returns is removed before it reaches the learner."""
+    dashed = (
+        '{"mission": "Learn X — fast", "baseline": "brand new — zero prior",'
+        ' "projects": [{"id": "p1", "you_build": "a — thing", "you_learn": "the — idea",'
+        ' "done_when": "it — runs"}]}'
+    )
+    orc, _ = _orc(store, [_QUESTIONS, dashed])
+    session = orc.start("rl")
+    session = orc.submit_interview(session.id, ["a", "b", "c"])
+    assert "—" not in session.mission
+    assert "—" not in session.projects[0].you_build
+    assert "—" not in session.projects[0].you_learn
+    assert "—" not in session.projects[0].done_when
+    assert all("—" not in entry.note for entry in session.progress)
+
+
 def test_baseline_prefers_explicit_engine_phrase(store: SessionStore) -> None:
     """The day-one baseline uses the engine's explicit `baseline`, not a guess."""
     ladder = (

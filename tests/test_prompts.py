@@ -8,9 +8,12 @@ learner's purpose/depth and current level, which is what sizes the ladder.
 
 from __future__ import annotations
 
+from forgelearn.common.types import Project
 from forgelearn.orchestrator.prompts import (
+    build_prompt,
     interview_prompt,
     mission_and_ladder_prompt,
+    teachback_prompt,
 )
 
 
@@ -47,3 +50,18 @@ def test_ladder_prompt_scales_rigor_to_purpose() -> None:
     lowered = prompt.lower()
     assert "purpose" in lowered
     assert "research" in lowered
+
+
+def test_every_prompt_carries_the_reading_grade_and_no_em_dash() -> None:
+    """Each prompt tells the model the grade level and is itself em-dash-free."""
+    project = Project(id="p1", you_build="a bandit", you_learn="explore", done_when="runs")
+    prompts = [
+        interview_prompt("rl", 3, 6, 5),
+        mission_and_ladder_prompt("rl", [("q", "a")], 5, 7, [], 5),
+        build_prompt("mission", project, [], 5),
+        teachback_prompt("mission", project, "my explanation", [], 3, 5),
+    ]
+    for prompt in prompts:
+        assert "GRADE 5" in prompt  # the model is told the level
+        assert "em dash" in prompt.lower()  # ... and told not to use them
+        assert "—" not in prompt  # the prompt text itself uses no em dash

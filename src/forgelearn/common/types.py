@@ -164,6 +164,7 @@ class Session(BaseModel):
         teachbacks: Teach-back records, one per completed project.
         current_project_id: The rung the user is on, if any.
         workspace_path: Filesystem path to this session's project workspace.
+        reading_grade: School grade level the AI writes for in this session.
         created_at: When the session was created (UTC).
     """
 
@@ -177,6 +178,7 @@ class Session(BaseModel):
     teachbacks: list[TeachBack] = Field(default_factory=list)
     current_project_id: str | None = None
     workspace_path: str | None = None
+    reading_grade: int = 7
     created_at: datetime = Field(default_factory=_utcnow)
 
     def project(self, project_id: str) -> Project | None:

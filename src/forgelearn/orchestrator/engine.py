@@ -102,11 +102,13 @@ class Orchestrator:
 
     # --- Stage 1: interview --------------------------------------------------
 
-    def start(self, topic: str) -> Session:
+    def start(self, topic: str, grade: int | None = None) -> Session:
         """Begin a session: capture the topic and generate interview questions.
 
         Args:
             topic: The subject the learner wants to learn ("I want to learn X").
+            grade: School grade level to write for; ``None`` uses the configured
+                default. Stored on the session and reused by later stages.
 
         Returns:
             The new session, stage ``INTERVIEW``, with its questions populated.
@@ -117,13 +119,15 @@ class Orchestrator:
         """
         topic = _clean(topic, _MAX_TOPIC_CHARS, "topic")
         settings = get_settings()
+        grade = _clamp_grade(grade if grade is not None else settings.reading_grade_default)
         prompt = interview_prompt(
             topic,
             settings.interview_min_questions,
             settings.interview_max_questions,
+            grade,
         )
         data = self._ask_json(prompt)
-        questions = _string_list(data.get("questions"), "questions")
+        questions = _plain_list(_string_list(data.get("questions"), "questions"))
         if not questions:
             raise OrchestratorError("the engine returned no interview questions")
 
@@ -132,18 +136,23 @@ class Orchestrator:
             topic=topic,
             stage=SessionStage.INTERVIEW,
             interview_questions=questions,
+            reading_grade=grade,
         )
-        _logger.info("started session %s for topic %r", session.id, topic[:80])
+        _logger.info("started session %s for topic %r (grade %d)", session.id, topic[:80], grade)
         return self._store.create(session)
 
     # --- Stage 2: mission + ladder ------------------------------------------
 
-    def submit_interview(self, session_id: str, answers: list[str]) -> Session:
+    def submit_interview(
+        self, session_id: str, answers: list[str], grade: int | None = None
+    ) -> Session:
         """Take the interview answers and generate the mission + project ladder.
 
         Args:
             session_id: The session being answered.
             answers: The learner's answers, aligned to ``interview_questions``.
+            grade: Optional school grade level; when given, it updates the session
+                so this and later stages write at that level.
 
         Returns:
             The session, stage ``LADDER``, with ``mission`` and ``projects`` set
@@ -156,6 +165,7 @@ class Orchestrator:
         """
         session = self._store.get(session_id)
         _require_stage(session, SessionStage.INTERVIEW)
+        grade = _apply_grade(session, grade)
 
         qa_pairs = _zip_qa(session.interview_questions, answers)
         settings = get_settings()
@@ -165,13 +175,14 @@ class Orchestrator:
             settings.ladder_min_projects,
             settings.ladder_max_projects,
             [entry.note for entry in session.progress],
+            grade,
         )
         data = self._ask_json(prompt)
 
-        mission = str(data.get("mission", "")).strip()
+        mission = _plain_text(str(data.get("mission", "")).strip())
         if not mission:
             raise OrchestratorError("the engine returned an empty mission")
-        baseline = str(data.get("baseline", "")).strip()
+        baseline = _plain_text(str(data.get("baseline", "")).strip())
         projects = _parse_projects(data.get("projects"))
 
         # First rung is ready to build; the rest stay locked until teach-backs pass.
@@ -190,7 +201,9 @@ class Orchestrator:
 
     # --- Stage 3: build (the browser watches the agent stream) --------------
 
-    def build_instruction(self, session_id: str, project_id: str | None = None) -> str:
+    def build_instruction(
+        self, session_id: str, project_id: str | None = None, grade: int | None = None
+    ) -> str:
         """Return the build prompt for a rung and mark the session ``BUILDING``.
 
         The build itself is a live agent stream the server runs and the browser
@@ -200,6 +213,8 @@ class Orchestrator:
         Args:
             session_id: The session whose project to build.
             project_id: The rung to build; defaults to the current active rung.
+            grade: Optional school grade level for the build narration; when given
+                it updates the session.
 
         Returns:
             The natural-language build instruction for the agent.
@@ -214,13 +229,16 @@ class Orchestrator:
             raise OrchestratorError(
                 f"rung {project.id!r} is locked; finish the earlier project first"
             )
+        grade = _apply_grade(session, grade)
 
         project.status = ProjectStatus.ACTIVE
         session.current_project_id = project.id
         session.stage = SessionStage.BUILDING
         self._store.save(session)
         _logger.info("session %s: building rung %s", session.id, project.id)
-        return build_prompt(session.mission, project, self._prior_concepts(session, project))
+        return build_prompt(
+            session.mission, project, self._prior_concepts(session, project), grade
+        )
 
     def mark_built(self, session_id: str, project_id: str | None = None) -> Session:
         """Record that a rung's build finished; open its teach-back gate.
@@ -248,7 +266,11 @@ class Orchestrator:
     # --- Stage 4: teach-back gate -------------------------------------------
 
     def submit_teachback(
-        self, session_id: str, project_id: str | None, explanation: str
+        self,
+        session_id: str,
+        project_id: str | None,
+        explanation: str,
+        grade: int | None = None,
     ) -> TeachBackResult:
         """Judge a teach-back; on a pass, unlock the next rung and log progress.
 
@@ -256,6 +278,8 @@ class Orchestrator:
             session_id: The session being assessed.
             project_id: The rung explained; defaults to the current rung.
             explanation: The learner's own-words explanation.
+            grade: Optional school grade level for the verdict wording; when given
+                it updates the session.
 
         Returns:
             A :class:`TeachBackResult` with the verdict, any probes, the progress
@@ -268,6 +292,7 @@ class Orchestrator:
         explanation = _clean(explanation, _MAX_EXPLANATION_CHARS, "explanation")
         session = self._store.get(session_id)
         project = self._resolve_project(session, project_id)
+        grade = _apply_grade(session, grade)
 
         settings = get_settings()
         prompt = teachback_prompt(
@@ -276,14 +301,15 @@ class Orchestrator:
             explanation,
             self._prior_concepts(session, project),
             settings.teachback_max_probes,
+            grade,
         )
         data = self._ask_json(prompt)
 
         passed = bool(data.get("passed", False))
-        probes = _string_list(data.get("probes"), "probes")
-        feedback = str(data.get("feedback", "")).strip()
-        progress_note = str(data.get("progress_note", "")).strip()
-        storage_note = str(data.get("storage_note", "")).strip()
+        probes = _plain_list(_string_list(data.get("probes"), "probes"))
+        feedback = _plain_text(str(data.get("feedback", "")).strip())
+        progress_note = _plain_text(str(data.get("progress_note", "")).strip())
+        storage_note = _plain_text(str(data.get("storage_note", "")).strip())
 
         teachback = TeachBack(
             project_id=project.id,
@@ -429,9 +455,9 @@ def _parse_projects(value: object) -> list[Project]:
         projects.append(
             Project(
                 id=str(raw.get("id") or f"p{index}").strip(),
-                you_build=str(raw.get("you_build", "")).strip(),
-                you_learn=str(raw.get("you_learn", "")).strip(),
-                done_when=str(raw.get("done_when", "")).strip(),
+                you_build=_plain_text(str(raw.get("you_build", "")).strip()),
+                you_learn=_plain_text(str(raw.get("you_learn", "")).strip()),
+                done_when=_plain_text(str(raw.get("done_when", "")).strip()),
                 status=ProjectStatus.LOCKED,
             )
         )
@@ -468,7 +494,7 @@ def _baseline_note(
     adaptive.
     """
     starting = baseline or _first_answer(qa_pairs) or "starting fresh"
-    return f"Day one — mission: {mission} Starting point: {starting}"
+    return _plain_text(f"Day one, mission: {mission}. Starting point: {starting}")
 
 
 def _first_answer(qa_pairs: list[tuple[str, str]]) -> str:
@@ -488,3 +514,50 @@ def _require_stage(session: Session, expected: SessionStage) -> None:
 def _today() -> date:
     """Today's date (UTC) — progress entries are day-granular."""
     return datetime.now(timezone.utc).date()
+
+
+# --- Plain-language + reading-grade helpers ----------------------------------
+
+# Grades outside this range make no sense for wording; clamp so a stray value
+# can't produce an absurd prompt.
+_MIN_GRADE = 1
+_MAX_GRADE = 20
+
+
+def _clamp_grade(grade: int) -> int:
+    """Keep a reading grade within a sensible school range."""
+    try:
+        return max(_MIN_GRADE, min(_MAX_GRADE, int(grade)))
+    except (TypeError, ValueError):
+        return get_settings().reading_grade_default
+
+
+def _apply_grade(session: Session, grade: int | None) -> int:
+    """Update the session's reading grade if a new one is given; return it.
+
+    Lets the browser change the "explain like grade N" level at any time; when no
+    grade is passed, the session keeps whatever it was created or last set with.
+    """
+    if grade is not None:
+        session.reading_grade = _clamp_grade(grade)
+    return session.reading_grade
+
+
+def _plain_text(text: str) -> str:
+    """Strip em/en dashes from generated text.
+
+    A backstop for the prompt's "no dashes" rule so the user never sees an em dash
+    in AI output regardless of how well the model followed instructions. Em dashes
+    become commas; en dashes in ranges become hyphens.
+    """
+    return (
+        text.replace(" — ", ", ")
+        .replace(" – ", ", ")
+        .replace("—", ", ")
+        .replace("–", "-")
+    )
+
+
+def _plain_list(items: list[str]) -> list[str]:
+    """Apply :func:`_plain_text` to every string in a list."""
+    return [_plain_text(item) for item in items]

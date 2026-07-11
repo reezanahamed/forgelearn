@@ -1,4 +1,4 @@
-"""The teaching prompts — where ForgeLearn's method becomes instructions (Phase 7).
+"""The teaching prompts, where ForgeLearn's method becomes instructions (Phase 7).
 
 This module is the product's core IP in text form. The state machine
 (``engine.py``) is deliberately thin; the *quality* of the learning lives here,
@@ -18,30 +18,51 @@ from ``TEACHING_PRINCIPLES.md`` (referenced inline by number):
 
 Prompts are pure functions of their inputs (no config or I/O import) so they can
 be unit-tested and reviewed as the teaching contract in isolation. The counts
-(#questions, ladder size, #probes) are passed in by the engine from central
-config.
+(#questions, ladder size, #probes) and the reading ``grade`` level are passed in
+by the engine from central config or the learner's UI choice.
 """
 
 from __future__ import annotations
 
 from forgelearn.common.types import Project
 
+# Default school grade the AI writes for when none is chosen. Mirrors the config
+# default so a prompt built in isolation (e.g. in a test) still reads sensibly.
+DEFAULT_GRADE = 7
+
 # A single JSON-only instruction reused by every structured prompt, so the "no
 # prose, no fences, no files" rule reads identically everywhere (DRY).
 _JSON_ONLY = (
-    "Respond with a single valid JSON object and NOTHING else — no prose before "
-    "or after, no markdown code fence. Do NOT create files or run any commands; "
-    "this is a question to answer, not a task to build."
+    "Respond with a single valid JSON object and NOTHING else: no prose before "
+    "or after, and no markdown code fence. Do NOT create files or run any "
+    "commands; this is a question to answer, not a task to build."
 )
 
 
-def interview_prompt(topic: str, min_questions: int, max_questions: int) -> str:
+def _plain_language(grade: int) -> str:
+    """Instruction to write at a given school grade level, in plain English.
+
+    This is what keeps generated content readable (and em-dash-free) no matter the
+    subject. The engine also strips any stray dashes from the output as a backstop.
+    """
+    return (
+        f"WRITE FOR A GRADE {grade} READER. Use short sentences and simple, everyday "
+        "words that a student at that level understands easily. Avoid jargon; when a "
+        "technical term is truly needed, explain it in plain words right away. Keep a "
+        "warm, encouraging tone. Do NOT use em dashes or en dashes anywhere; use "
+        "commas, periods, or parentheses instead."
+    )
+
+
+def interview_prompt(
+    topic: str, min_questions: int, max_questions: int, grade: int = DEFAULT_GRADE
+) -> str:
     """Prompt the engine to generate the learner's interview questions.
 
     Grounds the whole method in the learner's own motivation (#2). The interview
     is ADAPTIVE, not a fixed script: the tutor asks as few or as many questions as
     the topic warrants (within the given bounds) to pin down three things that
-    change how the ladder is designed — the learner's PURPOSE and target depth
+    change how the ladder is designed: the learner's PURPOSE and target depth
     (casual curiosity vs. academic study vs. career/practical vs. research), their
     current KNOWLEDGE LEVEL so rungs can be sized by ZPD (#9), and how much time
     they have.
@@ -50,6 +71,7 @@ def interview_prompt(topic: str, min_questions: int, max_questions: int) -> str:
         topic: The subject the learner typed.
         min_questions: Fewest questions to ask.
         max_questions: Most questions to ask.
+        grade: School grade level to write the questions for.
 
     Returns:
         A prompt that asks for ``{"questions": [...]}``.
@@ -60,23 +82,24 @@ the learner BUILD things, never by lecturing.
 A new learner wants to learn: "{topic}".
 
 Before designing anything, interview them. Ask ONLY as many questions as you truly \
-need — between {min_questions} and {max_questions}. A broad or advanced topic may \
+need, between {min_questions} and {max_questions}. A broad or advanced topic may \
 need more; a narrow, concrete one needs fewer. Do not pad to a fixed number.
 
 Your questions must let you understand, at minimum:
-1. PURPOSE & DEPTH — why they want this and how deep to go. Is it casual interest, \
-academic/exam study, career or practical use, or research-level mastery? This sets \
-how rigorous and how far the ladder should reach, and becomes their mission.
-2. CURRENT LEVEL — what they already know and any related background that \
-transfers, so the FIRST project is neither trivial nor overwhelming (ZPD).
-3. TIME — how much time they can give it per week.
+1. PURPOSE AND DEPTH: why they want this and how deep to go. Is it casual interest, \
+academic or exam study, career or practical use, or research-level mastery? This \
+sets how rigorous and how far the ladder should reach, and becomes their mission.
+2. CURRENT LEVEL: what they already know and any related background that transfers, \
+so the FIRST project is neither trivial nor overwhelming (ZPD).
+3. TIME: how much time they can give it per week.
 
 Ask more probing follow-ups when the topic is large or their level is unclear; \
-adapt the wording to THIS topic (don't ask generic boilerplate). Keep each \
-question to one sentence, plain language, no jargon.
+adapt the wording to THIS topic (don't ask generic boilerplate).
+
+{_plain_language(grade)}
 
 {_JSON_ONLY}
-Schema: {{"questions": ["...", "..."]}} — between {min_questions} and \
+Schema: {{"questions": ["...", "..."]}}, between {min_questions} and \
 {max_questions} strings, ordered as you'd ask them."""
 
 
@@ -86,12 +109,13 @@ def mission_and_ladder_prompt(
     min_projects: int,
     max_projects: int,
     progress_notes: list[str],
+    grade: int = DEFAULT_GRADE,
 ) -> str:
     """Prompt the engine to distill a mission and design the project ladder.
 
     Encodes ZPD sizing from what the learner already knows and any prior progress
     (#9), short single-win rungs (#10), build-not-read framing (#1), and the
-    domain→project-type rule so non-coding subjects become interactive sims
+    domain-to-project-type rule so non-coding subjects become interactive sims
     rather than essays (PLAN §3a/§3b).
 
     Args:
@@ -101,6 +125,7 @@ def mission_and_ladder_prompt(
         max_projects: Most rungs the ladder may have.
         progress_notes: Prior day-one-relative progress lines, if any, so a
             returning learner's ladder starts at the right height.
+        grade: School grade level to write the mission and ladder for.
 
     Returns:
         A prompt that asks for ``{"mission": ..., "baseline": ..., "projects": [...]}``.
@@ -123,41 +148,45 @@ Interview:
 
 Do three things.
 
-1. MISSION — Write one or two sentences, in the learner's own framing, stating \
-what they want to be able to DO. This grounds every project; refer back to it.
+1. MISSION: Write one or two sentences, in the learner's own framing, stating what \
+they want to be able to DO. This grounds every project; refer back to it.
 
-2. BASELINE — Write one short phrase capturing where they are STARTING today \
-(their current level/experience with this topic), drawn from the interview. This \
-is the day-one marker that all later progress is compared against; if they're a \
-complete beginner, say so plainly (e.g. "starting from scratch, no prior X").
+2. BASELINE: Write one short phrase capturing where they are STARTING today (their \
+current level or experience with this topic), drawn from the interview. This is the \
+day-one marker that all later progress is compared against; if they're a complete \
+beginner, say so plainly (for example, "starting from scratch, no prior X").
 
-3. LADDER — Design {min_projects} to {max_projects} tiny projects, easy → hard, \
+3. LADDER: Design {min_projects} to {max_projects} tiny projects, easy to hard, \
 each a rung toward the mission. Rules:
-- Each rung is something the learner BUILDS and can poke at — never "read about \
-X". For coding topics that's real code; for science/math/history/etc. it's a \
+- Each rung is something the learner BUILDS and can poke at, never "read about X". \
+For coding topics that's real code; for science, math, history, and so on it's a \
 small interactive simulation, visual, calculator, or hands-on experiment.
-- Size the FIRST rung to what they already know: just hard enough to stretch, \
-never trivial, never overwhelming (Zone of Proximal Development).
-- Let their stated PURPOSE and target depth set how far the ladder reaches: a \
-casual learner gets a shorter, gentler climb; an academic, career, or research \
-learner gets more rigor and a more advanced final rung.
+- Size the FIRST rung to what they already know: just hard enough to stretch, never \
+trivial, never overwhelming (Zone of Proximal Development).
+- Let their stated PURPOSE and target depth set how far the ladder reaches: a casual \
+learner gets a shorter, gentler climb; an academic, career, or research learner gets \
+more rigor and a more advanced final rung.
 - Each rung is ONE clear, quickly-completable win. No rung bundles many ideas.
 - Later rungs build on earlier ones so concepts get revisited, not taught once.
 
-For each rung give: a stable id ("p1", "p2", …), you_build (what they'll build), \
-you_learn (the single concept it teaches), and done_when (the concrete check \
-that it's finished).
+For each rung give: a stable id ("p1", "p2", and so on), you_build (what they'll \
+build), you_learn (the single concept it teaches), and done_when (the concrete \
+check that it's finished).
+
+{_plain_language(grade)}
 
 {_JSON_ONLY}
 Schema: {{"mission": "...", "baseline": "...", "projects": [{{"id": "p1", \
 "you_build": "...", "you_learn": "...", "done_when": "..."}}, ...]}}"""
 
 
-def build_prompt(mission: str, project: Project, prior_concepts: list[str]) -> str:
+def build_prompt(
+    mission: str, project: Project, prior_concepts: list[str], grade: int = DEFAULT_GRADE
+) -> str:
     """Compose the instruction that drives the agent to BUILD one rung, teaching.
 
-    This is not a JSON prompt — it is fed to the coding agent's build stream, so
-    the learner watches real files appear while the agent narrates. It insists on
+    This is not a JSON prompt; it is fed to the coding agent's build stream, so the
+    learner watches real files appear while the agent narrates. It insists on
     building not lecturing (#1), grounds the work in the mission (#2), cites a
     trusted source (#11), keeps the win small (#10), and interleaves earlier
     concepts where natural (#8).
@@ -166,6 +195,7 @@ def build_prompt(mission: str, project: Project, prior_concepts: list[str]) -> s
         mission: The learner's mission, to keep the build grounded.
         project: The rung to build.
         prior_concepts: Concepts from earlier rungs, to weave in where they fit.
+        grade: School grade level to narrate the build for.
 
     Returns:
         A natural-language build instruction for the agent.
@@ -186,14 +216,15 @@ Build this project WITH them, live, in this workspace:
 - Done when: {project.done_when}
 
 How to work:
-- Actually BUILD it — write real, runnable files into the workspace. Do not just \
+- Actually BUILD it: write real, runnable files into the workspace. Do not just \
 describe what you would do.
 - Make it runnable with a `main.py` entry point so the learner can press Run and \
-see it work. Keep it small — one clear win, not a big program.
-- As you go, EXPLAIN each step in plain language, like a patient tutor: what \
-you're writing and WHY it teaches "{project.you_learn}". Short sentences.
-- Cite one trusted resource (official docs, a well-known text) the learner can \
-read to go deeper — never rely on memory alone.
+see it work. Keep it small: one clear win, not a big program.
+- As you go, EXPLAIN each step like a patient tutor: what you're writing and WHY it \
+teaches "{project.you_learn}".
+- {_plain_language(grade)}
+- Cite one trusted resource (official docs, a well-known text) the learner can read \
+to go deeper, never rely on memory alone.
 {interleave}- Keep everything tied back to their mission so it never feels abstract.
 
 End when "done when" is satisfied and the project runs."""
@@ -205,14 +236,15 @@ def teachback_prompt(
     explanation: str,
     prior_concepts: list[str],
     max_probes: int,
+    grade: int = DEFAULT_GRADE,
 ) -> str:
     """Prompt the engine to judge a learner's teach-back and probe weak spots.
 
-    The gate that makes learning stick: it checks for real MECHANISM, not
-    restated words (#3), pushes a little past comfort (desirable difficulty, #6),
-    and — crucially — spaces and interleaves by spot-checking an earlier concept
-    inside the probes (#7/#8). It targets durable storage strength over momentary
-    fluency (#5) and reports progress only against day one (#4).
+    The gate that makes learning stick: it checks for real MECHANISM, not restated
+    words (#3), pushes a little past comfort (desirable difficulty, #6), and,
+    crucially, spaces and interleaves by spot-checking an earlier concept inside the
+    probes (#7/#8). It targets durable storage strength over momentary fluency (#5)
+    and reports progress only against day one (#4).
 
     Args:
         mission: The learner's mission, for grounded, relevant probes.
@@ -220,6 +252,7 @@ def teachback_prompt(
         explanation: The learner's own-words explanation.
         prior_concepts: Earlier concepts available to spot-check for spacing.
         max_probes: Most follow-up probes to raise.
+        grade: School grade level to write the feedback and probes for.
 
     Returns:
         A prompt that asks for the verdict JSON (passed / probes / feedback /
@@ -227,38 +260,41 @@ def teachback_prompt(
     """
     spacing = (
         "At least one probe should quietly re-check an EARLIER concept they built "
-        f"({'; '.join(prior_concepts)}), so older ideas stay retrievable — not "
+        f"({'; '.join(prior_concepts)}), so older ideas stay retrievable, not "
         "only this project's.\n"
         if prior_concepts
         else ""
     )
     return f"""You are ForgeLearn's teach-back judge. The learner just built a project \
-and is explaining it back in their own words. Real learning shows as MECHANISM \
-(how and why it works), not restated vocabulary.
+and is explaining it back in their own words. Real learning shows as MECHANISM (how \
+and why it works), not restated vocabulary.
 
 Mission: "{mission}"
-Project — you build: {project.you_build}
-Project — they learn: {project.you_learn}
+Project, you build: {project.you_build}
+Project, they learn: {project.you_learn}
 
 The learner's explanation:
 \"\"\"{explanation}\"\"\"
 
 Judge it:
 - passed = true ONLY if they explained the actual mechanism of \
-"{project.you_learn}" — cause and effect, not just the right words. Being able to \
-say it now (fluency) is not the goal; durable understanding is. When in doubt, do \
-NOT pass — a little extra difficulty makes it stick.
+"{project.you_learn}": cause and effect, not just the right words. Being able to say \
+it now (fluency) is not the goal; durable understanding is. When in doubt, do NOT \
+pass; a little extra difficulty makes it stick.
 - Write up to {max_probes} short probing questions aimed exactly at the weak or \
-missing parts of their explanation. If they clearly nailed it, you may return \
-fewer (even zero) probes.
+missing parts of their explanation. If they clearly nailed it, you may return fewer \
+(even zero) probes.
 {spacing}- feedback: two or three encouraging sentences on what was solid and what to \
 sharpen.
-- progress_note: one sentence comparing them to DAY ONE only (what they can do \
-now that they couldn't at the start) — never compare them to anyone else.
-- storage_note: one short tip for making this stick (e.g. revisit it in a few days).
+- progress_note: one sentence comparing them to DAY ONE only (what they can do now \
+that they couldn't at the start), never compare them to anyone else.
+- storage_note: one short tip for making this stick (for example, revisit it in a \
+few days).
 
 If you use any multiple-choice phrasing in a probe, keep all options the same \
 length so formatting never gives the answer away.
+
+{_plain_language(grade)}
 
 {_JSON_ONLY}
 Schema: {{"passed": true, "probes": ["..."], "feedback": "...", \
