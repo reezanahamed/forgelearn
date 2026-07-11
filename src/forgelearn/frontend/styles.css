@@ -521,6 +521,32 @@ header h1 {
   border-left: 3px solid #e0564f;
 }
 
+/* Loading spinner shown in a build turn until the first event streams in. */
+.turn-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 2px;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* The teach-back judge's verdict card. */
 .verdict {
   max-width: 52rem;

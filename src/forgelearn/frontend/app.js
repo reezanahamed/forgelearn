@@ -387,13 +387,26 @@ function startAssistantTurn(title) {
   head.append(status);
   const body = el("div", "turn-body");
   msg.append(head, body);
+
+  // A spinner placeholder shown until the first real activity streams in, since
+  // the agent can take a while to spin up before its first event arrives.
+  const loading = el("div", "turn-loading");
+  loading.append(el("span", "spinner"));
+  loading.append(el("span", null, "Starting up… the AI is getting to work"));
+  body.append(loading);
+
   chat.append(msg);
   scrollToEnd();
+
+  const clearLoading = () => {
+    if (loading.parentNode) loading.remove();
+  };
 
   return {
     addEvent(evt) {
       const kind = evt.kind || "system";
       if (HIDDEN.has(kind)) return;
+      clearLoading(); // first visible event: drop the spinner
       if (kind === "narration") {
         body.append(el("div", "ev narration", evt.text || ""));
       } else if (kind === "done" || kind === "error") {
@@ -404,6 +417,7 @@ function startAssistantTurn(title) {
       scrollToEnd();
     },
     finish(s) {
+      clearLoading();
       status.className = "status " + s;
       status.textContent = s === "error" ? "error" : "done";
       scrollToEnd();
