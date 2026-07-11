@@ -1,63 +1,43 @@
 /*
- * ForgeLearn — the learning method in the browser (Phase 7).
+ * ForgeLearn, guided-lesson redesign.
  *
- * The page walks a learner through the method:
+ * Flow: topic -> interview -> a syllabus of lessons -> per lesson:
+ *   teach (a plain concept + an interactive widget) -> a quick check ->
+ *   watch the AI demo a worked example -> build YOUR OWN version in the editor
+ *   (with Hint and Check my work) -> the next lesson unlocks.
  *
- *   topic → interview (a few adaptive questions) → mission + ladder → build a rung (watched
- *   live) → teach-back gate → unlock the next rung.
- *
- * One composer, three roles: it asks the topic, takes an interview answer, or
- * takes a teach-back explanation — app.js sets its placeholder and shows/hides it
- * per stage. The LADDER rail (left) shows the mission, the rungs with their
- * status, and progress vs day one; the WORKSPACE (right) shows the files the
- * agent wrote and a Run button. Building a rung streams over SSE and reuses the
- * exact turn-rendering the earlier phases built.
- *
- * The learning SESSION id comes from the server (POST /api/learn/start) and is
- * the same id the workspace endpoints key on, so a rung's files land where Run
- * and the file tree read them.
+ * The middle column carries the lesson conversation; the right column is the
+ * workspace + a code editor you type in. Widgets are the AI's self-contained HTML
+ * rendered in a sandboxed iframe.
  */
 
 const AGENTS_PATH = "/api/agents";
 const FILES_PATH = "/api/files";
 const FILE_PATH = "/api/file";
 const FILE_RAW_PATH = "/api/file/raw";
+const FILE_SAVE_PATH = "/api/file/save";
 const RUN_PATH = "/api/run";
+const C_START = "/api/course/start";
+const C_INTERVIEW = "/api/course/interview";
+const C_SESSION = "/api/course/session";
+const C_SESSIONS = "/api/course/sessions";
+const C_OPEN = "/api/course/open";
+const C_CHECK = "/api/course/check";
+const C_DEMO = "/api/course/demo";
+const C_BUILD = "/api/course/build";
+const C_HINT = "/api/course/hint";
 
-// Extensions the viewer renders as an image instead of decoding as text.
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"]);
-const LEARN_START = "/api/learn/start";
-const LEARN_INTERVIEW = "/api/learn/interview";
-const LEARN_SESSION = "/api/learn/session";
-const LEARN_SESSIONS = "/api/learn/sessions";
-const LEARN_BUILD = "/api/learn/build";
-const LEARN_TEACHBACK = "/api/learn/teachback";
-const LEARN_EXPORT = "/api/learn/export";
-
-// The last session id, stored client-side so a returning learner resumes it
-// (the sessions themselves are persisted server-side; Phase 8).
 const SESSION_KEY = "forgelearn.session";
-// The chosen "explain like grade N" reading level, remembered across visits.
 const GRADE_KEY = "forgelearn.grade";
 
-/** The currently selected reading grade (an int), defaulting to 7. */
-function currentGrade() {
-  return parseInt(gradeEl && gradeEl.value, 10) || 7;
-}
-
-// Kinds that end a stream: on these we close it and finish the turn.
 const TERMINAL = new Set(["done", "error"]);
-// Setup/lifecycle noise hidden so the teaching feed stays clean.
 const HIDDEN = new Set(["system"]);
-// Small glyphs labelling each action kind at a glance.
 const ICONS = { file_write: "\u{1F4C4}", command: "❯", tool: "·", tool_result: "↳" };
-
-// Human-readable status for each rung, shown as a badge in the ladder rail.
-const RUNG_STATUS = {
-  locked: "locked",
-  active: "up next",
-  built: "built",
-  complete: "done",
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"]);
+const STATUS_LABEL = { locked: "locked", active: "up next", built: "built", complete: "done" };
+const STAGE_LABEL = {
+  new: "just started", interview: "in the interview", syllabus: "picking a lesson",
+  learning: "in a lesson", complete: "completed",
 };
 
 const chat = document.getElementById("chat");
@@ -68,562 +48,95 @@ const agentEl = document.getElementById("agent");
 const gradeEl = document.getElementById("grade");
 const sendBtn = document.getElementById("send");
 const runBtn = document.getElementById("run");
+const hintBtn = document.getElementById("hint");
 const filesEl = document.getElementById("files");
+const railEl = document.getElementById("syllabus");
+const missionEl = document.getElementById("mission");
+const lessonsEl = document.getElementById("lessons");
+const progressEl = document.getElementById("progress");
+const exportBtn = document.getElementById("export");
+const editorWrap = document.getElementById("editor-wrap");
+const editorEl = document.getElementById("editor");
+const editorName = document.getElementById("editor-name");
+const saveBtn = document.getElementById("save");
+const checkWorkBtn = document.getElementById("check-work");
 const viewer = document.getElementById("viewer");
 const viewerName = document.getElementById("viewer-name");
 const viewerContent = document.getElementById("viewer-content");
 const viewerClose = document.getElementById("viewer-close");
-const ladderEl = document.getElementById("ladder");
-const missionEl = document.getElementById("mission");
-const rungsEl = document.getElementById("rungs");
-const progressEl = document.getElementById("progress");
-const exportBtn = document.getElementById("export");
 
-// The whole client state. `stage` decides what a composer submit does.
 const state = {
-  session: null, // server-issued learning session id (also the workspace id)
-  stage: "new", // new | interview | ladder | building | teachback | complete
-  questions: [], // interview questions
-  answers: [], // answers gathered so far
-  qIndex: 0, // which interview question we're on
-  projects: [], // the ladder rungs
-  activeProjectId: null, // the rung currently being built / taught back
+  session: null,
+  stage: "new", // new | interview | syllabus | learning | complete
+  questions: [],
+  answers: [],
+  qIndex: 0,
+  lessons: [],
+  activeLessonId: null,
+  checkKind: null, // "mcq" | "short" while awaiting a check answer
 };
 
-// The one in-flight SSE stream, or null when idle.
-let source = null;
+let source = null; // the one in-flight SSE stream
 
-/** Create an element with a class and optional text, in one call. */
+/* --- Tiny DOM helpers ------------------------------------------------------ */
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text != null) node.textContent = text;
   return node;
 }
-
-/** Keep the newest content in view as the conversation grows.
- *
- * Scrolls on the next animation frame so it runs AFTER the browser lays out the
- * just-appended content; scrolling synchronously can land short of the true
- * bottom (leaving the last line clipped) when the new content changes height. */
 function scrollToEnd() {
-  requestAnimationFrame(() => {
-    chat.scrollTop = chat.scrollHeight;
-  });
+  requestAnimationFrame(() => (chat.scrollTop = chat.scrollHeight));
 }
-
-/** Append the learner's message as a right-aligned bubble. */
 function addUserMessage(text) {
-  const msg = el("div", "msg user");
-  msg.append(el("div", "bubble", text));
-  chat.append(msg);
+  const m = el("div", "msg user");
+  m.append(el("div", "bubble", text));
+  chat.append(m);
   scrollToEnd();
 }
-
-/** Append a tutor message (question, announcement, verdict) as a left card. */
 function addTutorMessage(text) {
-  const msg = el("div", "msg tutor");
-  msg.append(el("div", "tutor-body", text));
-  chat.append(msg);
+  const m = el("div", "msg tutor");
+  m.append(el("div", "tutor-body", text));
+  chat.append(m);
   scrollToEnd();
-  return msg;
+  return m;
 }
-
-/**
- * Append an animated "thinking…" indicator while the AI works. Returns the node;
- * call .remove() on it once the response (or an error) arrives.
- */
 function showThinking(text) {
-  const msg = el("div", "msg tutor thinking");
-  const body = el("div", "tutor-body");
-  body.append(el("span", null, (text || "Thinking") + " "));
-  const dots = el("span", "dots");
-  dots.innerHTML = "<span>.</span><span>.</span><span>.</span>";
-  body.append(dots);
-  msg.append(body);
-  chat.append(msg);
+  const m = el("div", "msg tutor thinking");
+  const b = el("div", "tutor-body");
+  b.append(el("span", null, (text || "Thinking") + " "));
+  const d = el("span", "dots");
+  d.innerHTML = "<span>.</span><span>.</span><span>.</span>";
+  b.append(d);
+  m.append(b);
+  chat.append(m);
   scrollToEnd();
-  return msg;
+  return m;
 }
-
-/** Append a clearly-marked error card (distinct from a normal tutor message). */
 function addErrorMessage(text) {
-  const msg = el("div", "msg tutor error");
-  msg.append(el("div", "tutor-body", text));
-  chat.append(msg);
+  const m = el("div", "msg tutor error");
+  m.append(el("div", "tutor-body", text));
+  chat.append(m);
   scrollToEnd();
-  return msg;
+  return m;
 }
-
-/**
- * Turn a raw backend/agent error into clear, actionable guidance. The engine is a
- * separate CLI (claude/codex) the user runs and authenticates in their own
- * terminal, so its failures need translating into "here's what to do". Returns a
- * friendly string, or null when there's no better wording than the raw message.
- */
+function currentGrade() {
+  return parseInt(gradeEl && gradeEl.value, 10) || 7;
+}
 function friendlyError(raw) {
   const r = (raw || "").toLowerCase();
-  if (
-    r.includes("not logged in") ||
-    r.includes("/login") ||
-    r.includes("logged out") ||
-    r.includes("unauthorized") ||
-    r.includes("authenticat")
-  ) {
-    return (
-      "The AI engine isn't signed in. This sign-in happens in your terminal, not " +
-      "here: open a terminal and run `claude` (for Claude Code) or `codex` (for " +
-      "OpenAI Codex), complete the login, then come back and send your topic again."
-    );
-  }
-  if (r.includes("api key") || r.includes("api_key") || r.includes("invalid key")) {
-    return (
-      "The AI engine rejected its API key. Check the key or login for your agent " +
-      "CLI (claude or codex) in your terminal, then try again."
-    );
-  }
-  if (r.includes("command not found") || r.includes("no such file") || r.includes("enoent")) {
-    return (
-      "The AI engine CLI wasn't found. Install `claude` (Claude Code) or `codex` " +
-      "(OpenAI Codex) so it runs from your terminal, then try again."
-    );
-  }
-  if (r.includes("credit") || r.includes("quota") || r.includes("rate limit") || r.includes("insufficient")) {
-    return "The AI engine hit a usage or billing limit. Check your provider account, then try again. Details: " + raw;
-  }
-  if (r.includes("timed out") || r.includes("timeout")) {
-    return "The AI engine took too long and timed out. Try again; a simpler topic or a faster model can help.";
-  }
+  if (r.includes("not logged in") || r.includes("/login") || r.includes("unauthorized") || r.includes("authenticat"))
+    return "The AI engine isn't signed in. Open a terminal and run `claude` (or `codex`) to log in, then try again.";
+  if (r.includes("command not found") || r.includes("no such file") || r.includes("enoent"))
+    return "The AI engine CLI wasn't found. Install `claude` or `codex` so it runs from your terminal, then try again.";
+  if (r.includes("timed out") || r.includes("timeout"))
+    return "The AI engine took too long and timed out. Please try again.";
   return null;
 }
 
-/* --- Stage 1: topic + interview ------------------------------------------- */
+/* --- Networking ------------------------------------------------------------ */
 
-/** Show or hide the composer and set its placeholder for the current role. */
-function composerRole(show, placeholder) {
-  form.hidden = !show;
-  if (placeholder) promptEl.placeholder = placeholder;
-  if (show) promptEl.focus();
-}
-
-/** Begin: send the topic, get interview questions, ask the first. */
-async function startLearning(topic) {
-  addUserMessage(topic);
-  const thinking = showThinking("Reading your goal and preparing a few questions");
-  const data = await postJSON(LEARN_START, { topic, grade: currentGrade() });
-  thinking.remove();
-  if (!data) return;
-
-  state.session = data.id;
-  rememberSession(data.id);
-  state.questions = data.interview_questions || [];
-  state.answers = [];
-  state.qIndex = 0;
-  state.stage = "interview";
-  addTutorMessage(
-    "Great. A few quick questions so I can tailor this to you.",
-  );
-  askNextQuestion();
-}
-
-/** Show the next interview question, or submit once all are answered. */
-function askNextQuestion() {
-  if (state.qIndex >= state.questions.length) {
-    submitInterview();
-    return;
-  }
-  const q = state.questions[state.qIndex];
-  addTutorMessage(`Question ${state.qIndex + 1} of ${state.questions.length}: ${q}`);
-  composerRole(true, "Type your answer…");
-}
-
-/** Record an interview answer and advance. */
-function recordAnswer(answer) {
-  addUserMessage(answer);
-  state.answers.push(answer);
-  state.qIndex += 1;
-  askNextQuestion();
-}
-
-/** Submit the interview answers; render the mission + ladder. */
-async function submitInterview() {
-  composerRole(false);
-  const thinking = showThinking("Designing your ladder of projects");
-  const session = await postJSON(LEARN_INTERVIEW, {
-    session: state.session,
-    answers: state.answers,
-    grade: currentGrade(),
-  });
-  thinking.remove();
-  if (!session) return;
-  applySession(session);
-  addTutorMessage(
-    "Here's your mission and ladder on the left. Press Build on the first " +
-      "project when you're ready, and I'll build it with you.",
-  );
-}
-
-/* --- Stage 2: the ladder rail --------------------------------------------- */
-
-/** Update client state + the ladder rail from a full session payload. */
-function applySession(session) {
-  state.stage = session.stage;
-  state.projects = session.projects || [];
-  state.activeProjectId = session.current_project_id;
-  renderLadder(session);
-  // Once there's a mission, the session is worth keeping — offer the export.
-  exportBtn.hidden = !session.mission;
-}
-
-/** Render the mission, rungs (with a Build button on the active one), progress. */
-function renderLadder(session) {
-  ladderEl.hidden = false;
-  missionEl.textContent = session.mission || "";
-
-  rungsEl.textContent = "";
-  (session.projects || []).forEach((p, i) => {
-    const li = el("li", "rung " + p.status);
-    const head = el("div", "rung-head");
-    head.append(el("span", "rung-title", `${i + 1}. ${p.you_build}`));
-    head.append(el("span", "rung-badge " + p.status, RUNG_STATUS[p.status] || p.status));
-    li.append(head);
-    li.append(el("div", "rung-learn", "Learn: " + p.you_learn));
-
-    // The active, not-yet-built rung gets a Build button (idle only).
-    if (p.status === "active") {
-      const build = el("button", "rung-build", "Build");
-      build.disabled = source !== null;
-      build.addEventListener("click", () => buildRung(p.id));
-      li.append(build);
-    }
-    rungsEl.append(li);
-  });
-
-  progressEl.textContent = "";
-  (session.progress || []).forEach((entry) => {
-    progressEl.append(el("li", "progress-item", `${entry.on}: ${entry.note}`));
-  });
-}
-
-/* --- Stage 3: build a rung (watched live) --------------------------------- */
-
-/** Build the given rung: stream the agent's work, then open the teach-back. */
-function buildRung(projectId) {
-  if (source) return; // one stream at a time
-  state.activeProjectId = projectId;
-  state.stage = "building";
-  const project = state.projects.find((p) => p.id === projectId);
-  addTutorMessage(`Building: ${project ? project.you_build : projectId}`);
-
-  const agent = agentEl.value; // "" → server default
-  const url =
-    LEARN_BUILD +
-    "?session=" + encodeURIComponent(state.session) +
-    "&project=" + encodeURIComponent(projectId) +
-    "&grade=" + encodeURIComponent(currentGrade()) +
-    (agent ? "&agent=" + encodeURIComponent(agent) : "");
-  runStream(url, project ? project.you_build : "Build", (endState) => {
-    if (endState === "done") openTeachBack(projectId);
-    else refreshSession(); // failed build — re-enable the Build button
-  });
-}
-
-/* --- Stage 4: the teach-back gate ----------------------------------------- */
-
-/**
- * Guide the learner through the teach-back: what it is, that a rough attempt is
- * fine, and where to look for a refresher. Shared by a fresh build and a resumed
- * session so the explanation is always clear (on resume the build chat is gone,
- * so this is the only guidance the learner has).
- */
-function promptTeachBack(project, opener) {
-  const concept = project ? `"${project.you_learn}"` : "what you just built";
-  addTutorMessage(
-    opener +
-      " Now a quick teach-back: in your own words, explain how " +
-      concept +
-      " works, like you're teaching a friend. There's no wrong answer here, a rough " +
-      "try is enough. I'll ask a follow-up or two, then the next project unlocks.",
-  );
-  addTutorMessage(
-    "Need a refresher first? The files you built are on the right: click one to read " +
-      "it, or press Run to watch it work. Then type your explanation below and press Send.",
-  );
-  composerRole(true, "Explain it in your own words, like teaching a friend…");
-}
-
-/** Prompt the learner to explain what they just built (fresh build). */
-async function openTeachBack(projectId) {
-  await refreshSession(); // reflect the BUILT status server-side
-  state.stage = "teachback";
-  state.activeProjectId = projectId;
-  const project = state.projects.find((p) => p.id === projectId);
-  promptTeachBack(project, "You built it. 🎉");
-}
-
-/** Submit an explanation; render the verdict; unlock or ask to try again. */
-async function submitTeachBack(explanation) {
-  addUserMessage(explanation);
-  composerRole(false);
-  const thinking = showThinking("Thinking about your explanation");
-  const data = await postJSON(LEARN_TEACHBACK, {
-    session: state.session,
-    project: state.activeProjectId,
-    explanation,
-    grade: currentGrade(),
-  });
-  thinking.remove();
-  if (!data) return;
-
-  renderVerdict(data);
-  if (data.session) applySession(data.session);
-
-  if (data.passed) {
-    if (data.next_project_id) {
-      const next = (data.session.projects || []).find((p) => p.id === data.next_project_id);
-      addTutorMessage(
-        "Unlocked the next project" +
-          (next ? `: ${next.you_build}` : "") +
-          ". Press Build on the left when you're ready.",
-      );
-      state.stage = "ladder";
-    } else {
-      addTutorMessage("🎉 You've completed every project on your ladder. Look how far you've come from day one.");
-      state.stage = "complete";
-    }
-  } else {
-    // Not passed: stay in teach-back so the learner can refine and resubmit.
-    state.stage = "teachback";
-    composerRole(true, "Refine your explanation and try again…");
-  }
-}
-
-/** Render the judge's verdict: pass/fail badge, feedback, probes, notes. */
-function renderVerdict(data) {
-  const card = el("div", "verdict " + (data.passed ? "pass" : "fail"));
-  card.append(el("div", "verdict-badge", data.passed ? "Passed ✓" : "Not yet, keep going"));
-  if (data.feedback) card.append(el("p", "verdict-feedback", data.feedback));
-  if (data.probes && data.probes.length) {
-    card.append(el("div", "verdict-label", "Sharpen these:"));
-    const ul = el("ul", "probes");
-    data.probes.forEach((p) => ul.append(el("li", null, p)));
-    card.append(ul);
-  }
-  if (data.progress_note) card.append(el("p", "verdict-progress", data.progress_note));
-  if (data.storage_note) card.append(el("p", "verdict-storage", "Make it stick: " + data.storage_note));
-  chat.append(card);
-  scrollToEnd();
-}
-
-/* --- SSE build stream (reused turn rendering) ----------------------------- */
-
-/** Start a new assistant turn: a titled card whose body fills with events. */
-function startAssistantTurn(title) {
-  const msg = el("div", "msg assistant");
-  const head = el("div", "turn-head");
-  head.append(el("span", null, title));
-  const status = el("span", "status building");
-  status.innerHTML = '<span class="dots"><span>.</span><span>.</span><span>.</span></span>';
-  head.append(status);
-  const body = el("div", "turn-body");
-  msg.append(head, body);
-
-  // A spinner placeholder shown until the first real activity streams in, since
-  // the agent can take a while to spin up before its first event arrives.
-  const loading = el("div", "turn-loading");
-  loading.append(el("span", "spinner"));
-  loading.append(el("span", null, "Starting up… the AI is getting to work"));
-  body.append(loading);
-
-  chat.append(msg);
-  scrollToEnd();
-
-  const clearLoading = () => {
-    if (loading.parentNode) loading.remove();
-  };
-
-  return {
-    addEvent(evt) {
-      const kind = evt.kind || "system";
-      if (HIDDEN.has(kind)) return;
-      clearLoading(); // first visible event: drop the spinner
-      if (kind === "narration") {
-        body.append(el("div", "ev narration", evt.text || ""));
-      } else if (kind === "done" || kind === "error") {
-        if (evt.text) body.append(el("div", "turn-foot", evt.text));
-      } else {
-        body.append(renderStep(kind, evt));
-      }
-      scrollToEnd();
-    },
-    finish(s) {
-      clearLoading();
-      status.className = "status " + s;
-      status.textContent = s === "error" ? "error" : "done";
-      scrollToEnd();
-    },
-  };
-}
-
-/** Build a compact sub-step row for a file write / command / tool action. */
-function renderStep(kind, evt) {
-  const row = el("div", "ev step " + kind);
-  if (evt.is_error) row.classList.add("is-error");
-  row.append(el("span", "icon", ICONS[kind] || ICONS.tool));
-  const label = kind === "file_write" && evt.path ? evt.path : evt.text || "";
-  row.append(el("span", "step-text", label));
-  return row;
-}
-
-/**
- * Open an SSE stream at `url`, render its events into a new turn, resolve via
- * `onFinish(state)`. Shared by Build and Run. Disables controls while in flight
- * and refreshes the workspace when it ends.
- */
-function runStream(url, title, onFinish) {
-  const turn = startAssistantTurn(title);
-  let finished = false;
-  setBusy(true);
-  source = new EventSource(url);
-
-  const done = (endState) => {
-    endStream();
-    refreshFiles();
-    if (onFinish) onFinish(endState);
-  };
-
-  source.onmessage = (frame) => {
-    let evt;
-    try {
-      evt = JSON.parse(frame.data);
-    } catch {
-      return;
-    }
-    turn.addEvent(evt);
-    if (TERMINAL.has(evt.kind)) {
-      finished = true;
-      const endState = evt.kind === "error" ? "error" : "done";
-      turn.finish(endState);
-      done(endState);
-    }
-  };
-
-  source.onerror = () => {
-    if (finished) return;
-    turn.addEvent({ kind: "error", text: "connection to the server was lost" });
-    turn.finish("error");
-    done("error");
-  };
-}
-
-/** Toggle the composer + Run + Build buttons while a stream is in flight. */
-function setBusy(busy) {
-  sendBtn.disabled = busy;
-  promptEl.disabled = busy;
-  agentEl.disabled = busy;
-  if (busy) runBtn.disabled = true;
-  rungsEl.querySelectorAll(".rung-build").forEach((b) => (b.disabled = busy));
-}
-
-/** Close the in-flight stream and re-enable the composer. */
-function endStream() {
-  if (source) {
-    source.close();
-    source = null;
-  }
-  sendBtn.disabled = false;
-  promptEl.disabled = false;
-}
-
-/* --- Workspace: files, viewer, Run ---------------------------------------- */
-
-/** Fetch the session's file tree and render it; enable Run if there are files. */
-async function refreshFiles() {
-  if (!state.session) return;
-  let files = [];
-  try {
-    const resp = await fetch(FILES_PATH + "?session=" + encodeURIComponent(state.session));
-    if (resp.ok) files = (await resp.json()).files || [];
-  } catch {
-    return;
-  }
-  filesEl.textContent = "";
-  if (files.length === 0) {
-    filesEl.append(el("li", "files-empty", "Files the AI builds appear here."));
-    runBtn.disabled = true;
-    return;
-  }
-  for (const f of files) {
-    const li = el("li", "file");
-    li.append(el("span", "file-name", f.path));
-    li.append(el("span", "file-size", formatSize(f.size)));
-    li.addEventListener("click", () => openFile(f.path));
-    filesEl.append(li);
-  }
-  runBtn.disabled = source !== null;
-}
-
-/** Open a file in the modal viewer: images render as pictures, code as text. */
-async function openFile(path) {
-  viewerName.textContent = path;
-  viewerContent.textContent = "";
-  const ext = (path.split(".").pop() || "").toLowerCase();
-
-  if (IMAGE_EXTS.has(ext)) {
-    // Render the real bytes as an image instead of decoding them as text.
-    const img = el("img", "viewer-img");
-    img.alt = path;
-    img.src =
-      FILE_RAW_PATH +
-      "?session=" + encodeURIComponent(state.session) +
-      "&path=" + encodeURIComponent(path);
-    viewerContent.append(img);
-    viewer.hidden = false;
-    return;
-  }
-
-  try {
-    const resp = await fetch(
-      FILE_PATH +
-        "?session=" + encodeURIComponent(state.session) +
-        "&path=" + encodeURIComponent(path),
-    );
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const pre = el("pre", "viewer-pre");
-    pre.textContent = data.content || "";
-    viewerContent.append(pre);
-    viewer.hidden = false;
-  } catch {
-    /* viewing a file is best-effort */
-  }
-}
-
-/** Hide the file viewer modal. */
-function closeViewer() {
-  viewer.hidden = true;
-  viewerContent.textContent = "";
-}
-
-viewerClose.addEventListener("click", closeViewer);
-// Click on the dark backdrop (outside the panel) closes the viewer.
-viewer.addEventListener("click", (e) => {
-  if (e.target === viewer) closeViewer();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !viewer.hidden) closeViewer();
-});
-
-/** Human-readable byte size, e.g. "1.2 KB". */
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-}
-
-/* --- Networking + session refresh ----------------------------------------- */
-
-/** POST JSON and return the parsed body, or null (surfacing an error card). */
 async function postJSON(url, payload) {
   try {
     const resp = await fetch(url, {
@@ -638,37 +151,479 @@ async function postJSON(url, payload) {
       return null;
     }
     return data;
-  } catch (e) {
-    addErrorMessage(
-      "Could not reach the server. Make sure `forgelearn` is still running in your terminal, then try again.",
-    );
+  } catch {
+    addErrorMessage("Could not reach the server. Is `forgelearn` still running?");
     return null;
   }
 }
 
-/** Re-fetch the session and re-render the ladder (after a build/teach-back). */
-async function refreshSession() {
-  if (!state.session) return;
-  try {
-    const resp = await fetch(LEARN_SESSION + "?session=" + encodeURIComponent(state.session));
-    if (resp.ok) applySession(await resp.json());
-  } catch {
-    /* best-effort */
+/* --- Stage 1: topic + interview ------------------------------------------- */
+
+function composerRole(show, placeholder) {
+  form.hidden = !show;
+  if (placeholder) promptEl.placeholder = placeholder;
+  if (show) promptEl.focus();
+}
+
+async function startLearning(topic) {
+  addUserMessage(topic);
+  const t = showThinking("Reading your goal and preparing a few questions");
+  const data = await postJSON(C_START, { topic, grade: currentGrade() });
+  t.remove();
+  if (!data) return;
+  state.session = data.id;
+  rememberSession(data.id);
+  state.questions = data.interview_questions || [];
+  state.answers = [];
+  state.qIndex = 0;
+  state.stage = "interview";
+  addTutorMessage("Great. A few quick questions so I can tailor this to you.");
+  askNextQuestion();
+}
+
+function askNextQuestion() {
+  if (state.qIndex >= state.questions.length) return submitInterview();
+  addTutorMessage(`Question ${state.qIndex + 1} of ${state.questions.length}: ${state.questions[state.qIndex]}`);
+  composerRole(true, "Type your answer…");
+}
+function recordAnswer(answer) {
+  addUserMessage(answer);
+  state.answers.push(answer);
+  state.qIndex += 1;
+  askNextQuestion();
+}
+
+async function submitInterview() {
+  composerRole(false);
+  const t = showThinking("Designing your course of lessons");
+  const session = await postJSON(C_INTERVIEW, { session: state.session, answers: state.answers, grade: currentGrade() });
+  t.remove();
+  if (!session) return;
+  applySession(session);
+  addTutorMessage("Here's your course on the left. Click the first lesson to start.");
+}
+
+/* --- Syllabus rail --------------------------------------------------------- */
+
+function applySession(session) {
+  state.stage = session.stage;
+  state.lessons = session.lessons || [];
+  state.activeLessonId = session.active_lesson_id;
+  renderRail(session);
+  exportBtn.hidden = !session.mission;
+}
+
+function renderRail(session) {
+  railEl.hidden = false;
+  missionEl.textContent = session.mission || "";
+  lessonsEl.textContent = "";
+  (session.lessons || []).forEach((le, i) => {
+    const li = el("li", "lesson " + le.status);
+    const head = el("div", "lesson-head");
+    head.append(el("span", "lesson-title", `${i + 1}. ${le.title}`));
+    head.append(el("span", "lesson-badge " + le.status, STATUS_LABEL[le.status] || le.status));
+    li.append(head);
+    if (le.goal) li.append(el("div", "lesson-goal", le.goal));
+    if (le.status === "active" || le.status === "complete") {
+      li.classList.add("clickable");
+      li.addEventListener("click", () => openLesson(le.id));
+    }
+    lessonsEl.append(li);
+  });
+  progressEl.textContent = "";
+  (session.progress || []).forEach((e) => progressEl.append(el("li", "progress-item", `${e.on}: ${e.note}`)));
+}
+
+/* --- Stage 2: open a lesson (teach) --------------------------------------- */
+
+async function openLesson(lessonId) {
+  if (source) return;
+  const t = showThinking("Opening the lesson");
+  const session = await postJSON(C_OPEN, { session: state.session, lesson: lessonId, grade: currentGrade() });
+  t.remove();
+  if (!session) return;
+  applySession(session);
+  const lesson = state.lessons.find((l) => l.id === lessonId);
+  if (lesson) renderLesson(lesson);
+}
+
+function renderLesson(lesson) {
+  state.activeLessonId = lesson.id;
+  addTutorMessage(`Lesson: ${lesson.title}`);
+  if (lesson.concept) addTutorMessage(lesson.concept);
+  if (lesson.widget && lesson.widget.html) renderWidget(lesson.widget);
+  if (lesson.check) renderCheck(lesson.check);
+  else startDemoPrompt(lesson);
+}
+
+function renderWidget(widget) {
+  const card = el("div", "widget-card");
+  if (widget.title) card.append(el("div", "widget-title", widget.title));
+  if (widget.caption) card.append(el("div", "widget-caption", widget.caption));
+  const frame = document.createElement("iframe");
+  frame.className = "widget-frame";
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.setAttribute("title", widget.title || "interactive");
+  frame.srcdoc = widget.html;
+  card.append(frame);
+  chat.append(card);
+  scrollToEnd();
+}
+
+function renderCheck(check) {
+  addTutorMessage("Quick check: " + check.question);
+  if (check.kind === "mcq" && (check.options || []).length) {
+    state.checkKind = "mcq";
+    const box = el("div", "options");
+    check.options.forEach((opt) => {
+      const b = el("button", "option", opt);
+      b.addEventListener("click", () => {
+        box.querySelectorAll("button").forEach((x) => (x.disabled = true));
+        submitCheck(opt);
+      });
+      box.append(b);
+    });
+    chat.append(box);
+    scrollToEnd();
+    composerRole(false);
+  } else {
+    state.checkKind = "short";
+    composerRole(true, "Type your answer…");
   }
 }
 
-/* --- Provider dropdown ----------------------------------------------------- */
+async function submitCheck(answer) {
+  addUserMessage(answer);
+  state.checkKind = null;
+  composerRole(false);
+  const t = showThinking("Checking your answer");
+  const data = await postJSON(C_CHECK, {
+    session: state.session, lesson: state.activeLessonId, answer, grade: currentGrade(),
+  });
+  t.remove();
+  if (!data) return;
+  const card = el("div", "verdict " + (data.correct ? "pass" : "fail"));
+  card.append(el("div", "verdict-badge", data.correct ? "Correct ✓" : "Not quite"));
+  if (data.feedback) card.append(el("p", "verdict-feedback", data.feedback));
+  if (data.explanation) card.append(el("p", "verdict-explain", data.explanation));
+  chat.append(card);
+  scrollToEnd();
+  const lesson = state.lessons.find((l) => l.id === state.activeLessonId);
+  startDemoPrompt(lesson);
+}
 
-/** Populate the provider dropdown from /api/agents and preselect the default. */
+/* --- Stage 3: the AI demo -------------------------------------------------- */
+
+function startDemoPrompt(lesson) {
+  const msg = addTutorMessage("Now watch me build a worked example. Then you'll build your own.");
+  const btn = el("button", "cta", "Watch the demo");
+  btn.addEventListener("click", () => {
+    btn.disabled = true;
+    startDemo(lesson ? lesson.id : state.activeLessonId);
+  });
+  msg.querySelector(".tutor-body").append(document.createElement("br"), btn);
+  scrollToEnd();
+}
+
+function startDemo(lessonId) {
+  if (source) return;
+  const agent = agentEl.value;
+  const url = C_DEMO + "?session=" + encodeURIComponent(state.session) +
+    "&lesson=" + encodeURIComponent(lessonId) +
+    "&grade=" + encodeURIComponent(currentGrade()) +
+    (agent ? "&agent=" + encodeURIComponent(agent) : "");
+  runStream(url, "Worked example", (endState) => {
+    if (endState === "done") startBuild(lessonId);
+    else refreshSession();
+  });
+}
+
+/* --- Stage 4: your build --------------------------------------------------- */
+
+async function startBuild(lessonId) {
+  await refreshSession();
+  const lesson = state.lessons.find((l) => l.id === lessonId);
+  addTutorMessage(
+    "Your turn 🔨 " + (lesson ? lesson.build_task : "Build your own version.") +
+      " Write it in the editor on the right, Save, then press Check my work. Stuck? Press Hint.",
+  );
+  editorName.value = lesson && lesson.domain_type === "interactive" ? "index.html" : "main.py";
+  editorEl.value = "";
+  editorWrap.hidden = false;
+  hintBtn.disabled = false;
+  checkWorkBtn.disabled = false;
+  editorEl.focus();
+}
+
+async function saveEditor() {
+  if (!state.session) return false;
+  const path = (editorName.value || "main.py").trim();
+  const data = await postJSON(FILE_SAVE_PATH, { session: state.session, path, content: editorEl.value });
+  if (data) refreshFiles();
+  return !!data;
+}
+
+async function checkMyWork() {
+  if (source) return;
+  if (!(await saveEditor())) return;
+  const t = showThinking("Looking over what you built");
+  const data = await postJSON(C_BUILD, { session: state.session, lesson: state.activeLessonId, grade: currentGrade() });
+  t.remove();
+  if (!data) return;
+  const card = el("div", "verdict " + (data.passed ? "pass" : "fail"));
+  card.append(el("div", "verdict-badge", data.passed ? "Passed ✓" : "Not yet, keep going"));
+  if (data.feedback) card.append(el("p", "verdict-feedback", data.feedback));
+  if (data.hints && data.hints.length) {
+    card.append(el("div", "verdict-label", "Try this:"));
+    const ul = el("ul", "probes");
+    data.hints.forEach((h) => ul.append(el("li", null, h)));
+    card.append(ul);
+  }
+  if (data.progress_note) card.append(el("p", "verdict-progress", data.progress_note));
+  chat.append(card);
+  scrollToEnd();
+  if (data.session) applySession(data.session);
+  if (data.passed) {
+    editorWrap.hidden = true;
+    hintBtn.disabled = true;
+    checkWorkBtn.disabled = true;
+    if (data.next_lesson_id) {
+      const next = (data.session.lessons || []).find((l) => l.id === data.next_lesson_id);
+      addTutorMessage("Lesson complete 🎉 Next up: " + (next ? next.title : "the next lesson") + ". Click it on the left when ready.");
+    } else {
+      addTutorMessage("🎉 You've finished every lesson. Look how far you've come from day one.");
+    }
+  }
+}
+
+async function getHint() {
+  if (source) return;
+  await saveEditor();
+  const t = showThinking("Thinking of a hint");
+  const data = await postJSON(C_HINT, { session: state.session, lesson: state.activeLessonId, grade: currentGrade() });
+  t.remove();
+  if (data && data.hint) addTutorMessage("💡 " + data.hint);
+}
+
+/* --- SSE turn rendering (demo + run) -------------------------------------- */
+
+function startAssistantTurn(title) {
+  const msg = el("div", "msg assistant");
+  const head = el("div", "turn-head");
+  head.append(el("span", null, title));
+  const status = el("span", "status building");
+  status.innerHTML = '<span class="dots"><span>.</span><span>.</span><span>.</span></span>';
+  head.append(status);
+  const body = el("div", "turn-body");
+  msg.append(head, body);
+  const loading = el("div", "turn-loading");
+  loading.append(el("span", "spinner"));
+  loading.append(el("span", null, "Starting up… the AI is getting to work"));
+  body.append(loading);
+  chat.append(msg);
+  scrollToEnd();
+  const clearLoading = () => loading.parentNode && loading.remove();
+  return {
+    addEvent(evt) {
+      const kind = evt.kind || "system";
+      if (HIDDEN.has(kind)) return;
+      clearLoading();
+      if (kind === "narration") body.append(el("div", "ev narration", evt.text || ""));
+      else if (kind === "done" || kind === "error") { if (evt.text) body.append(el("div", "turn-foot", evt.text)); }
+      else body.append(renderStep(kind, evt));
+      scrollToEnd();
+    },
+    finish(s) {
+      clearLoading();
+      status.className = "status " + s;
+      status.textContent = s === "error" ? "error" : "done";
+      scrollToEnd();
+    },
+  };
+}
+function renderStep(kind, evt) {
+  const row = el("div", "ev step " + kind);
+  if (evt.is_error) row.classList.add("is-error");
+  row.append(el("span", "icon", ICONS[kind] || ICONS.tool));
+  row.append(el("span", "step-text", kind === "file_write" && evt.path ? evt.path : evt.text || ""));
+  return row;
+}
+function runStream(url, title, onFinish) {
+  const turn = startAssistantTurn(title);
+  let finished = false;
+  setBusy(true);
+  source = new EventSource(url);
+  const done = (endState) => {
+    endStream();
+    refreshFiles();
+    if (onFinish) onFinish(endState);
+  };
+  source.onmessage = (frame) => {
+    let evt;
+    try { evt = JSON.parse(frame.data); } catch { return; }
+    turn.addEvent(evt);
+    if (TERMINAL.has(evt.kind)) {
+      finished = true;
+      const endState = evt.kind === "error" ? "error" : "done";
+      turn.finish(endState);
+      done(endState);
+    }
+  };
+  source.onerror = () => {
+    if (finished) return;
+    turn.addEvent({ kind: "error", text: "connection to the server was lost" });
+    turn.finish("error");
+    done("error");
+  };
+}
+function setBusy(busy) {
+  sendBtn.disabled = busy;
+  promptEl.disabled = busy;
+  agentEl.disabled = busy;
+  if (busy) { runBtn.disabled = true; hintBtn.disabled = true; checkWorkBtn.disabled = true; }
+}
+function endStream() {
+  if (source) { source.close(); source = null; }
+  sendBtn.disabled = false;
+  promptEl.disabled = false;
+}
+
+/* --- Workspace: files, viewer, run ---------------------------------------- */
+
+async function refreshFiles() {
+  if (!state.session) return;
+  let files = [];
+  try {
+    const resp = await fetch(FILES_PATH + "?session=" + encodeURIComponent(state.session));
+    if (resp.ok) files = (await resp.json()).files || [];
+  } catch { return; }
+  filesEl.textContent = "";
+  if (!files.length) {
+    filesEl.append(el("li", "files-empty", "Files appear here as you build."));
+    runBtn.disabled = true;
+    return;
+  }
+  for (const f of files) {
+    const li = el("li", "file");
+    li.append(el("span", "file-name", f.path));
+    li.append(el("span", "file-size", formatSize(f.size)));
+    li.addEventListener("click", () => openFile(f.path));
+    filesEl.append(li);
+  }
+  runBtn.disabled = source !== null;
+}
+async function openFile(path) {
+  viewerName.textContent = path;
+  viewerContent.textContent = "";
+  const ext = (path.split(".").pop() || "").toLowerCase();
+  if (IMAGE_EXTS.has(ext)) {
+    const img = el("img", "viewer-img");
+    img.alt = path;
+    img.src = FILE_RAW_PATH + "?session=" + encodeURIComponent(state.session) + "&path=" + encodeURIComponent(path);
+    viewerContent.append(img);
+    viewer.hidden = false;
+    return;
+  }
+  try {
+    const resp = await fetch(FILE_PATH + "?session=" + encodeURIComponent(state.session) + "&path=" + encodeURIComponent(path));
+    if (!resp.ok) return;
+    const pre = el("pre", "viewer-pre");
+    pre.textContent = (await resp.json()).content || "";
+    viewerContent.append(pre);
+    viewer.hidden = false;
+  } catch { /* best-effort */ }
+}
+function closeViewer() { viewer.hidden = true; viewerContent.textContent = ""; }
+function formatSize(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+  return (b / 1048576).toFixed(1) + " MB";
+}
+
+/* --- Session refresh + resume + past sessions ----------------------------- */
+
+async function refreshSession() {
+  if (!state.session) return;
+  try {
+    const resp = await fetch(C_SESSION + "?session=" + encodeURIComponent(state.session));
+    if (resp.ok) applySession(await resp.json());
+  } catch { /* best-effort */ }
+}
+function rememberSession(id) { try { localStorage.setItem(SESSION_KEY, id); } catch {} }
+function lastSessionId() { try { return localStorage.getItem(SESSION_KEY); } catch { return null; } }
+function forgetSession() { try { localStorage.removeItem(SESSION_KEY); } catch {} }
+
+async function tryResume() {
+  const id = lastSessionId();
+  if (!id) return false;
+  let session;
+  try {
+    const resp = await fetch(C_SESSION + "?session=" + encodeURIComponent(id));
+    if (!resp.ok) { forgetSession(); return false; }
+    session = await resp.json();
+  } catch { return false; }
+  if (intro) intro.remove();
+  state.session = session.id;
+  rememberSession(session.id);
+  if (gradeEl && session.reading_grade) gradeEl.value = String(session.reading_grade);
+  applySession(session);
+  refreshFiles();
+  addTutorMessage('Welcome back to "' + (session.mission || session.topic) + '". Pick a lesson on the left to keep going.');
+  composerRole(false);
+  return true;
+}
+
+async function showPastSessions() {
+  if (!intro) return;
+  let sessions = [];
+  try {
+    const resp = await fetch(C_SESSIONS);
+    if (!resp.ok) return;
+    sessions = (await resp.json()).sessions || [];
+  } catch { return; }
+  sessions = sessions.filter((s) => s.mission || s.stage !== "new").slice(0, 8);
+  if (!sessions.length || !intro) return;
+  const box = el("div", "resume-box");
+  box.append(el("div", "resume-title", "Or pick up where you left off"));
+  const list = el("ul", "resume-list");
+  for (const s of sessions) {
+    const li = el("li", "resume-item");
+    li.append(el("span", "resume-topic", s.mission || s.topic || "Untitled"));
+    li.append(el("span", "resume-meta", (STAGE_LABEL[s.stage] || s.stage) + " · " + shortDate(s.created_at)));
+    li.addEventListener("click", () => openPastSession(s.id));
+    list.append(li);
+  }
+  box.append(list);
+  intro.append(box);
+}
+function shortDate(iso) {
+  try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return ""; }
+}
+async function openPastSession(id) {
+  let session;
+  try {
+    const resp = await fetch(C_SESSION + "?session=" + encodeURIComponent(id));
+    if (!resp.ok) { addErrorMessage("Could not open that session."); return; }
+    session = await resp.json();
+  } catch { addErrorMessage("Could not reach the server."); return; }
+  if (intro) intro.remove();
+  state.session = session.id;
+  rememberSession(session.id);
+  if (gradeEl && session.reading_grade) gradeEl.value = String(session.reading_grade);
+  applySession(session);
+  refreshFiles();
+  addTutorMessage('Welcome back to "' + (session.mission || session.topic) + '". Pick a lesson on the left to keep going.');
+}
+
+/* --- Provider dropdown + grade -------------------------------------------- */
+
 async function loadAgents() {
   let data;
   try {
     const resp = await fetch(AGENTS_PATH);
     if (!resp.ok) return;
     data = await resp.json();
-  } catch {
-    return;
-  }
+  } catch { return; }
   const agents = data.agents || [];
   agentEl.textContent = "";
   for (const name of agents) {
@@ -679,105 +634,13 @@ async function loadAgents() {
   }
   agentEl.hidden = agents.length < 2;
 }
-
-/* --- Resume + export (Phase 8) -------------------------------------------- */
-
-/** Persist the current session id so a return visit can resume it. */
-function rememberSession(id) {
-  try {
-    localStorage.setItem(SESSION_KEY, id);
-  } catch {
-    /* private mode / storage disabled — resume just won't be offered */
-  }
+function setUpGrade() {
+  if (!gradeEl) return;
+  try { const saved = localStorage.getItem(GRADE_KEY); if (saved) gradeEl.value = saved; } catch {}
+  gradeEl.addEventListener("change", () => { try { localStorage.setItem(GRADE_KEY, gradeEl.value); } catch {} });
 }
 
-/** The last session id we saw, or null if none / storage unavailable. */
-function lastSessionId() {
-  try {
-    return localStorage.getItem(SESSION_KEY);
-  } catch {
-    return null;
-  }
-}
-
-/** Forget the stored session (e.g. it no longer exists server-side). */
-function forgetSession() {
-  try {
-    localStorage.removeItem(SESSION_KEY);
-  } catch {
-    /* nothing to do */
-  }
-}
-
-/**
- * On load, try to resume the last session from the server. Returns true if a
- * session was restored, false to fall back to a fresh "what do you want to
- * learn?" start.
- */
-async function tryResume() {
-  const id = lastSessionId();
-  if (!id) return false;
-  let session;
-  try {
-    const resp = await fetch(LEARN_SESSION + "?session=" + encodeURIComponent(id));
-    if (!resp.ok) {
-      forgetSession();
-      return false;
-    }
-    session = await resp.json();
-  } catch {
-    return false;
-  }
-  resumeSession(session);
-  return true;
-}
-
-/** Rebuild the UI from a stored session and place the composer for its stage. */
-function resumeSession(session) {
-  if (intro) intro.remove();
-  state.session = session.id;
-  rememberSession(session.id);
-  // Reflect this session's saved reading level in the dropdown.
-  if (gradeEl && session.reading_grade) gradeEl.value = String(session.reading_grade);
-  applySession(session);
-  refreshFiles();
-
-  const stage = session.stage;
-  if (stage === "interview") {
-    // Answers aren't persisted mid-interview; re-ask from the top.
-    state.questions = session.interview_questions || [];
-    state.answers = [];
-    state.qIndex = 0;
-    addTutorMessage("Welcome back. Let's pick up your interview.");
-    askNextQuestion();
-    return;
-  }
-
-  addTutorMessage(
-    'Welcome back to "' + (session.mission || session.topic) + '". ' +
-      "Your ladder and progress are on the left.",
-  );
-
-  if (stage === "teachback") {
-    const project = state.projects.find((p) => p.id === state.activeProjectId);
-    promptTeachBack(project, "You'd already built this project.");
-  } else if (stage === "complete") {
-    addTutorMessage("🎉 You'd finished every rung. Export it below to keep it.");
-    composerRole(false);
-  } else {
-    // ladder / building: press Build on the active rung to continue.
-    addTutorMessage("Press Build on the active project to keep going.");
-    composerRole(false);
-  }
-}
-
-// Export: download this session as a self-contained HTML file.
-exportBtn.addEventListener("click", () => {
-  if (!state.session) return;
-  window.location.href = LEARN_EXPORT + "?session=" + encodeURIComponent(state.session);
-});
-
-/* --- Composer: one input, three roles ------------------------------------- */
+/* --- Event wiring ---------------------------------------------------------- */
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -785,140 +648,45 @@ form.addEventListener("submit", (e) => {
   if (!value || source) return;
   if (intro) intro.remove();
   promptEl.value = "";
-
-  // ForgeLearn has no slash-commands. Users who saw the agent CLI's
-  // "Please run /login" message sometimes type it here; guide them instead.
   if (value.startsWith("/")) {
-    addErrorMessage(
-      "ForgeLearn has no slash commands. A \"Please run /login\" message comes " +
-        "from your coding-agent CLI, and that login happens in your terminal: run " +
-        "`claude` (or `codex`) there to sign in, then come back and type what you " +
-        "want to learn.",
-    );
+    addErrorMessage("ForgeLearn has no slash commands. A \"/login\" message is for your agent CLI in the terminal (run `claude` or `codex`), not here.");
     return;
   }
-
   if (state.stage === "new") startLearning(value);
   else if (state.stage === "interview") recordAnswer(value);
-  else if (state.stage === "teachback") submitTeachBack(value);
+  else if (state.checkKind === "short") submitCheck(value);
 });
 
 runBtn.addEventListener("click", () => {
   if (source || !state.session) return;
-  runStream(RUN_PATH + "?session=" + encodeURIComponent(state.session), "Run", (endState) => {
-    // Running the code is not the finish line: the teach-back is. Nudge the
-    // learner toward it once the run succeeds while the gate is still open.
-    if (endState === "done" && state.stage === "teachback") {
-      addTutorMessage(
-        "Nice, it runs! This project isn't finished yet. To complete it and unlock " +
-          "the next one, explain how it works in the box below and press Send.",
-      );
-    }
-  });
+  runStream(RUN_PATH + "?session=" + encodeURIComponent(state.session), "Run");
 });
-
-/* --- Resume picker: reopen a saved session (Phase 8) ---------------------- */
-
-// Friendly label for a session's stage, shown in the picker.
-const STAGE_LABEL = {
-  new: "just started",
-  interview: "in the interview",
-  ladder: "ready to build",
-  building: "mid-build",
-  teachback: "at a teach-back",
-  complete: "completed",
-};
-
-// Most saved sessions to list, so the start screen never gets overwhelming.
-const RESUME_LIMIT = 8;
-
-/** A short human date from an ISO timestamp, best-effort. */
-function shortDate(iso) {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "";
+hintBtn.addEventListener("click", getHint);
+saveBtn.addEventListener("click", saveEditor);
+checkWorkBtn.addEventListener("click", checkMyWork);
+editorEl.addEventListener("keydown", (e) => {
+  // Ctrl/Cmd+S saves; Tab inserts two spaces instead of leaving the editor.
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveEditor(); }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const s = editorEl.selectionStart, en = editorEl.selectionEnd;
+    editorEl.value = editorEl.value.slice(0, s) + "  " + editorEl.value.slice(en);
+    editorEl.selectionStart = editorEl.selectionEnd = s + 2;
   }
-}
+});
+exportBtn.addEventListener("click", () => {
+  if (state.session) window.location.href = "/api/learn/export?session=" + encodeURIComponent(state.session);
+});
+viewerClose.addEventListener("click", closeViewer);
+viewer.addEventListener("click", (e) => { if (e.target === viewer) closeViewer(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !viewer.hidden) closeViewer(); });
 
-/**
- * On the fresh start screen, list saved sessions so the learner can reopen one
- * even if this browser has no stored id (the sessions live on the server).
- */
-async function showPastSessions() {
-  if (!intro) return;
-  let sessions = [];
-  try {
-    const resp = await fetch(LEARN_SESSIONS);
-    if (!resp.ok) return;
-    sessions = (await resp.json()).sessions || [];
-  } catch {
-    return;
-  }
-  // Skip empty shells (started but never got a mission); newest first already.
-  sessions = sessions.filter((s) => s.mission || s.stage !== "new").slice(0, RESUME_LIMIT);
-  if (!sessions.length || !intro) return;
+/* --- Boot ------------------------------------------------------------------ */
 
-  const box = el("div", "resume-box");
-  box.append(el("div", "resume-title", "Or pick up where you left off"));
-  const list = el("ul", "resume-list");
-  for (const s of sessions) {
-    const li = el("li", "resume-item");
-    li.append(el("span", "resume-topic", s.mission || s.topic || "Untitled session"));
-    li.append(
-      el("span", "resume-meta", (STAGE_LABEL[s.stage] || s.stage) + " · " + shortDate(s.created_at)),
-    );
-    li.addEventListener("click", () => openPastSession(s.id));
-    list.append(li);
-  }
-  box.append(list);
-  intro.append(box);
-}
-
-/** Reopen a chosen saved session and resume its UI. */
-async function openPastSession(id) {
-  let session;
-  try {
-    const resp = await fetch(LEARN_SESSION + "?session=" + encodeURIComponent(id));
-    if (!resp.ok) {
-      addErrorMessage("Could not open that session. It may have been removed.");
-      return;
-    }
-    session = await resp.json();
-  } catch {
-    addErrorMessage("Could not reach the server. Is `forgelearn` still running?");
-    return;
-  }
-  resumeSession(session);
-}
-
-/** Restore the saved reading grade into the dropdown and persist future changes. */
-function setUpGrade() {
-  if (!gradeEl) return;
-  try {
-    const saved = localStorage.getItem(GRADE_KEY);
-    if (saved) gradeEl.value = saved;
-  } catch {
-    /* storage disabled — the default grade still applies */
-  }
-  gradeEl.addEventListener("change", () => {
-    try {
-      localStorage.setItem(GRADE_KEY, gradeEl.value);
-    } catch {
-      /* nothing to persist to */
-    }
-  });
-}
-
-// Start: restore the reading level, fill the provider dropdown, then resume the
-// last session if there is one, else show the composer plus any past sessions.
 async function boot() {
   setUpGrade();
   await loadAgents();
   const resumed = await tryResume();
-  if (!resumed) {
-    composerRole(true, "What do you want to learn?");
-    showPastSessions();
-  }
+  if (!resumed) { composerRole(true, "What do you want to learn?"); showPastSessions(); }
 }
 boot();

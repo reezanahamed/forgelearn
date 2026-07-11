@@ -141,13 +141,14 @@ def test_static_assets_served(client: TestClient) -> None:
     """The learning UI's JS and CSS are served from the /static mount."""
     js = client.get("/static/app.js")
     assert js.status_code == 200
-    # Phase 7: the page drives the learning method (start → interview → build →
-    # teach-back) and builds a rung over SSE via the orchestrator's build endpoint.
+    # Redesign: the page drives the guided-lesson flow (start → interview → open
+    # lesson → check → demo → build) via the course API.
     assert "EventSource" in js.text
-    assert "/api/learn/start" in js.text
-    assert "/api/learn/interview" in js.text
-    assert "/api/learn/build" in js.text
-    assert "/api/learn/teachback" in js.text
+    assert "/api/course/start" in js.text
+    assert "/api/course/interview" in js.text
+    assert "/api/course/open" in js.text
+    assert "/api/course/demo" in js.text
+    assert "/api/course/build" in js.text
     # It still drives the workspace (files + run) with the session id.
     assert RUN_PATH in js.text
     assert FILES_PATH in js.text
