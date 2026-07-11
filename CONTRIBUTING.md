@@ -11,8 +11,12 @@ Thanks for trying ForgeLearn! It's an early project, and the most valuable thing
 
 ## Set up to try it
 
+To just try it, clone this repo. To contribute code, fork it first and clone your fork (replace `<your-username>`):
+
 ```bash
-git clone <your-fork-or-clone-url> forgelearn && cd forgelearn
+# try it
+git clone https://github.com/reezanahamed/forgelearn.git && cd forgelearn
+# or, to contribute: git clone https://github.com/<your-username>/forgelearn.git && cd forgelearn
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 forgelearn        # open http://localhost:8000

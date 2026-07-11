@@ -13,7 +13,7 @@ You type a topic. The AI interviews you, generates a ladder of tiny projects siz
 ## Install (development)
 
 ```bash
-git clone <your-fork-url> forgelearn && cd forgelearn
+git clone https://github.com/reezanahamed/forgelearn.git && cd forgelearn
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
