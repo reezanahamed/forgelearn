@@ -40,6 +40,21 @@ def create_app() -> FastAPI:
         version=__version__,
         summary="Learn any subject by building it, live, in the browser.",
     )
+
+    @app.middleware("http")
+    async def _no_cache_frontend(request, call_next):
+        """Tell the browser never to cache the UI (index + static JS/CSS).
+
+        ForgeLearn is a fast-moving local app updated by ``git pull``; without this
+        the browser serves stale ``app.js``/``styles.css`` from cache and users
+        keep seeing old behaviour after updating. The API is dynamic anyway.
+        """
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith(_STATIC_MOUNT):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
     app.include_router(router)
     app.include_router(learn_router)  # the Phase 7 learning-method API
 

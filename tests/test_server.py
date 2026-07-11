@@ -159,6 +159,9 @@ def test_static_assets_served(client: TestClient) -> None:
     css = client.get("/static/styles.css")
     assert css.status_code == 200
     assert css.headers["content-type"].startswith("text/css")
+    # Assets are served no-cache so a `git pull` update reaches the browser.
+    assert "no-cache" in js.headers.get("cache-control", "")
+    assert "no-cache" in css.headers.get("cache-control", "")
 
 
 # --- SSE stream endpoint (bridge) -------------------------------------------
